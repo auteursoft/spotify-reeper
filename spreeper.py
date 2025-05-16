@@ -2,16 +2,18 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 import pandas as pd
 import json
+import argparse
+import sys
 
 # Load client_id and client_secret from config.json
-with open('config.json') as f:
-    config = json.load(f)
-    client_id = config['client_id']
-    client_secret = config['client_secret']
-
-# Authenticate with Spotify
-client_credentials_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
-sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
+def load_config():
+    try:
+        with open('config.json') as f:
+            config = json.load(f)
+            return config['client_id'], config['client_secret']
+    except Exception as e:
+        print(f"Error loading config.json: {e}")
+        sys.exit(1)
 
 def get_playlist_id(playlist_url):
     return playlist_url.split("/")[-1].split("?")[0]
@@ -26,8 +28,17 @@ def fetch_playlist_tracks(sp, playlist_id):
     return tracks
 
 def main():
-    playlist_url = 'https://open.spotify.com/playlist/2aOikiOH69uiC9VHIAODA6?si=d9c7ac2492bf43fa'
-    playlist_id = get_playlist_id(playlist_url)
+    parser = argparse.ArgumentParser(description="Extract song titles and artists from a Spotify playlist.")
+    parser.add_argument("playlist_url", help="The Spotify playlist URL")
+    args = parser.parse_args()
+
+    client_id, client_secret = load_config()
+
+    # Authenticate with Spotify
+    client_credentials_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)
+    sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
+
+    playlist_id = get_playlist_id(args.playlist_url)
     tracks = fetch_playlist_tracks(sp, playlist_id)
 
     songs_data = []
