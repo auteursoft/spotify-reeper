@@ -5,7 +5,6 @@ import json
 import argparse
 import sys
 
-# Load client_id and client_secret from config.json
 def load_config():
     try:
         with open('config.json') as f:
@@ -50,7 +49,8 @@ def main():
             songs_data.append({'Song': song_name, 'Artists': artists})
 
     df = pd.DataFrame(songs_data)
-    print(df)
+    # Output as Markdown table
+    print(df.to_markdown(index=False))
 
 if __name__ == '__main__':
     main()
