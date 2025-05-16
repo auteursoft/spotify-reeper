@@ -28,6 +28,7 @@ Activation Lock Status:	Enabled
  - Once created, you’ll find your Client ID and Client Secret in the app’s settings. ￼ ￼
 7.	Set Up Redirect URI: Although not used in this script, **Spotify requires a redirect URI to be set.**
  - In your app settings, set the redirect URI to http://localhost:7777/callback or any valid URI.
+8. Using the `sample.config.json` file as a template, put your Client ID and Client Secret in the designated location. Then, rename the file to `config.json`. This file is part of the `.gitignore` for your repository, so you won't accidentally push it up to the repo. 
 
 ## Using 
 1.	Make sure your config.json file is in the same directory.
