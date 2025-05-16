@@ -29,9 +29,6 @@ Activation Lock Status:	Enabled
 7.	Set Up Redirect URI: Although not used in this script, **Spotify requires a redirect URI to be set.**
  - In your app settings, set the redirect URI to http://localhost:7777/callback or any valid URI.
 
-## Configuration Setup
- ￼
-
 ## Using 
 1.	Make sure your config.json file is in the same directory.
 2.	Run from the terminal like this:
