@@ -50,6 +50,9 @@ If Spotify shows **"redirect_uri: Not matching configuration"**, the redirect UR
 ```
 python cleaner.py list                                   # everything in your library
 python cleaner.py list "workout" --mine                  # only playlists you own
+python cleaner.py list --private --mine                  # your private playlists
+python cleaner.py delete --private --mine --apply        # remove all of your private playlists
+python cleaner.py delete "zb-" --public --apply          # remove public playlists whose names contain "zb-"
 python cleaner.py delete "^Untitled" --regex             # preview what would be removed
 python cleaner.py delete "^Untitled" --regex --apply     # actually remove them
 python cleaner.py move "workout" --to "Gym" --apply      # merge into one playlist, remove the sources
@@ -67,6 +70,9 @@ Pattern options (all commands). An empty pattern is rejected, so an unset shell 
 | `--case-sensitive` | match case exactly |
 | `--exclude PATTERN` | skip names that match this too |
 | `--mine` | only playlists you own, not ones you follow |
+| `--public` / `--private` | only public, or only private, playlists. Collaborative playlists count as private |
+
+The table shows each playlist's visibility as reported by Spotify: `public`, `private`, `collaborative`, or `unknown` if Spotify doesn't say (those match neither `--public` nor `--private`). `delete` needs a name pattern, `--public`, or `--private`, so it can never select your whole library by accident. Check the dry run against what the Spotify app shows before adding `--apply`.
 
 What each command does on Spotify:
 

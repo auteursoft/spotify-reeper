@@ -62,13 +62,16 @@ def name_matches(regex, name, mode):
 
 
 def filter_playlists(playlists, pattern=None, mode="substring", case_sensitive=False,
-                     exclude=None, owner_id=None):
+                     exclude=None, owner_id=None, visibility=None):
     """Return the playlists whose names match pattern and do not match exclude.
 
     pattern=None means "no filter". An empty or blank pattern is rejected rather than
     treated as "no filter", so an empty shell variable can never select every playlist.
     If owner_id is given, only playlists owned by that user are kept.
+    visibility is None (any), "public", or "private"; see playlist_visibility().
     """
+    if visibility not in (None, "public", "private"):
+        raise ValueError(f"Unknown visibility: {visibility}")
     for label, value in (("pattern", pattern), ("--exclude pattern", exclude)):
         if value is not None and not value.strip():
             raise ValueError(f"The {label} is empty. Pass a non-empty pattern.")
@@ -78,6 +81,8 @@ def filter_playlists(playlists, pattern=None, mode="substring", case_sensitive=F
     for pl in playlists:
         name = pl.get("name") or ""
         if owner_id and playlist_owner_id(pl) != owner_id:
+            continue
+        if visibility and playlist_is_public(pl) != (visibility == "public"):
             continue
         if include_re and not name_matches(include_re, name, mode):
             continue
@@ -94,6 +99,20 @@ def filter_playlists(playlists, pattern=None, mode="substring", case_sensitive=F
 
 def playlist_owner_id(pl):
     return (pl.get("owner") or {}).get("id")
+
+
+def playlist_is_public(pl):
+    """True, False, or None when Spotify doesn't say. Collaborative playlists are never public."""
+    if pl.get("collaborative"):
+        return False
+    public = pl.get("public")
+    return public if isinstance(public, bool) else None
+
+
+def playlist_visibility(pl):
+    if pl.get("collaborative"):
+        return "collaborative"
+    return {True: "public", False: "private", None: "unknown"}[playlist_is_public(pl)]
 
 
 def playlist_track_total(pl):
@@ -206,11 +225,11 @@ def print_table(playlists, extra=None):
     for i, pl in enumerate(playlists, 1):
         owner = pl.get("owner") or {}
         row = [i, pl.get("name"), owner.get("display_name") or owner.get("id"),
-               playlist_track_total(pl), pl.get("id")]
+               playlist_visibility(pl), playlist_track_total(pl), pl.get("id")]
         if extra:
             row.append(extra(pl))
         rows.append(row)
-    headers = ["#", "Name", "Owner", "Tracks", "ID"] + (["New name"] if extra else [])
+    headers = ["#", "Name", "Owner", "Visibility", "Tracks", "ID"] + (["New name"] if extra else [])
     if tabulate:
         print(tabulate(rows, headers=headers))
     else:
@@ -339,8 +358,6 @@ def rename_preview(regex, replacement):
 
 
 def cmd_rename(sp, args, user_id):
-    if args.match == "glob":
-        raise SystemExit("rename supports substring or --regex patterns, not --glob.")
     regex = compile_pattern(args.pattern, args.match, args.case_sensitive)
     # Only playlists you own can be renamed.
     targets = [pl for pl in select(sp, args, user_id, owned_only=True)
@@ -380,6 +397,7 @@ def select(sp, args, user_id, playlists=None, owned_only=False):
         case_sensitive=args.case_sensitive,
         exclude=args.exclude,
         owner_id=user_id if (owned_only or args.mine) else None,
+        visibility=args.visibility,
     )
 
 
@@ -401,6 +419,12 @@ def build_parser():
                         help="skip playlists whose names match this pattern (same mode)")
     common.add_argument("--mine", action="store_true",
                         help="only playlists you own (skip ones you merely follow)")
+    visibility = common.add_mutually_exclusive_group()
+    visibility.add_argument("--public", dest="visibility", action="store_const", const="public",
+                            help="only public playlists")
+    visibility.add_argument("--private", dest="visibility", action="store_const", const="private",
+                            help="only private playlists (collaborative playlists count as private)")
+    common.set_defaults(visibility=None)
     common.add_argument("--config", default="config.json", help="path to config.json")
 
     writes = argparse.ArgumentParser(add_help=False)
@@ -410,7 +434,8 @@ def build_parser():
                         help="skip the confirmation prompt when using --apply")
 
     parser = argparse.ArgumentParser(
-        description="List, delete, move, or rename Spotify playlists by name pattern.")
+        description="List, delete, move, or rename Spotify playlists by name pattern "
+                    "and public/private status.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("list", parents=[common], help="list playlists, optionally filtered")
@@ -419,7 +444,8 @@ def build_parser():
 
     p = sub.add_parser("delete", parents=[common, writes],
                        help="remove matching playlists from your library")
-    p.add_argument("pattern")
+    p.add_argument("pattern", nargs="?",
+                   help="name pattern (may be omitted if --public or --private is given)")
     p.set_defaults(func=cmd_delete)
 
     p = sub.add_parser("move", parents=[common, writes],
@@ -443,10 +469,15 @@ def build_parser():
 
 
 def validate_patterns(args):
-    """Reject empty or invalid patterns before logging in or touching anything."""
+    """Reject empty, invalid, or unsupported patterns before logging in or touching anything."""
+    if args.command == "rename" and args.match == "glob":
+        raise SystemExit("Error: rename supports substring or --regex patterns, not --glob.")
+    if args.command == "delete" and args.pattern is None and args.visibility is None:
+        raise SystemExit("Error: delete needs a name pattern, --public, or --private "
+                         "(refusing to select every playlist).")
     try:
         filter_playlists([], getattr(args, "pattern", None), args.match,
-                         args.case_sensitive, args.exclude)
+                         args.case_sensitive, args.exclude, visibility=args.visibility)
     except (ValueError, re.error) as err:
         raise SystemExit(f"Error: {err}")
 

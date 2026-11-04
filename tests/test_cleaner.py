@@ -241,10 +241,6 @@ def test_rename_skips_empty_result(capsys):
     assert sp.renamed == []
 
 
-def test_rename_rejects_glob():
-    sp = FakeSpotify(LIBRARY)
-    with pytest.raises(SystemExit):
-        run(sp, "rename", "*", "--glob", "--replace", "x")
 
 
 # ---------------- review fixes: empty patterns ----------------
@@ -272,6 +268,9 @@ def test_omitted_pattern_still_lists_everything():
     ["rename", "", "--replace", "x", "--apply", "--yes"],
     ["delete", "workout", "--exclude", ""],
     ["delete", "(unclosed", "--regex"],
+    ["rename", "*", "--glob", "--replace", "x", "--apply", "--yes"],
+    ["delete", "--apply", "--yes"],                 # no pattern and no visibility
+    ["delete", "--mine", "--apply", "--yes"],
 ])
 def test_cli_rejects_bad_patterns_before_logging_in(argv, monkeypatch):
     def no_login(*a, **k):
@@ -347,3 +346,71 @@ def test_move_one_unreadable_source_does_not_stop_the_others():
     assert run(sp, "move", "workout", "--to", "Gym", "--apply", "--yes") == 1
     assert sp.contents["new1"] == ["spotify:track:2"]
     assert sp.removed == ["b"]
+
+
+# ---------------- public / private ----------------
+
+def vis(pid, name, public, collaborative=False, owner=ME):
+    p = pl(pid, name, owner=owner)
+    p["public"] = public
+    p["collaborative"] = collaborative
+    return p
+
+
+VIS_LIBRARY = [
+    vis("p1", "zb- road trip", True),
+    vis("p2", "zb- secret", False),
+    vis("p3", "zb- shared", False, collaborative=True),
+    vis("p4", "Someone's mix", True, owner="other"),
+    vis("p5", "zb- odd", None),
+]
+
+
+def test_visibility_labels():
+    assert [cleaner.playlist_visibility(p) for p in VIS_LIBRARY] == \
+        ["public", "private", "collaborative", "public", "unknown"]
+
+
+@pytest.mark.parametrize("visibility,expected", [
+    (None, ["p1", "p2", "p3", "p4", "p5"]),
+    ("public", ["p1", "p4"]),
+    ("private", ["p2", "p3"]),   # collaborative counts as private; unknown matches neither
+])
+def test_filter_by_visibility(visibility, expected):
+    got = cleaner.filter_playlists(VIS_LIBRARY, visibility=visibility)
+    assert [p["id"] for p in got] == expected
+
+
+def test_visibility_combines_with_pattern_and_mine():
+    got = cleaner.filter_playlists(VIS_LIBRARY, "zb-", visibility="public", owner_id=ME)
+    assert [p["id"] for p in got] == ["p1"]
+
+
+def test_list_private_shows_visibility_column(capsys):
+    sp = FakeSpotify(VIS_LIBRARY)
+    run(sp, "list", "--private")
+    out = capsys.readouterr().out
+    assert "Visibility" in out and "zb- secret" in out and "road trip" not in out
+
+
+def test_delete_private_without_pattern():
+    sp = FakeSpotify(VIS_LIBRARY)
+    assert run(sp, "delete", "--private", "--mine", "--apply", "--yes") == 0
+    assert sp.removed == ["p2", "p3"]
+
+
+def test_delete_public_with_pattern():
+    sp = FakeSpotify(VIS_LIBRARY)
+    run(sp, "delete", "zb-", "--public", "--apply", "--yes")
+    assert sp.removed == ["p1"]
+
+
+def test_delete_by_visibility_is_a_dry_run_without_apply():
+    sp = FakeSpotify(VIS_LIBRARY)
+    run(sp, "delete", "--public")
+    assert sp.removed == []
+
+
+def test_public_and_private_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        cleaner.build_parser().parse_args(["list", "--public", "--private"])

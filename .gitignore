@@ -1,5 +1,8 @@
 # Dumb local stuff and secrets 
 config.json 
+# Spotify OAuth token cache written by spotipy (.cache, or .cache-<username>)
+.cache
+.cache-*
 .DS_Store
 **/.DS_Store
 *.DS_Store
