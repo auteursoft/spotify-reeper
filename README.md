@@ -26,7 +26,7 @@ Activation Lock Status:	Enabled
  - Log in with your Spotify account.
  - Click on “Create an App” and follow the prompts.
  - Once created, you’ll find your Client ID and Client Secret in the app’s settings. ￼ ￼
-7.	Set Up Redirect URI: Although not used in this script, **Spotify requires a redirect URI to be set.**
+7.	Set Up Redirect URI: **Spotify requires a redirect URI to be set**, and the playlist cleaner uses it to log you in. It must match character for character.
  - In your app settings, set the redirect URI to `http://127.0.0.1:7777/callback`. (Spotify no longer accepts `localhost` redirect URIs; use the loopback IP.) The playlist cleaner below uses this URI to log you in.
 8. Using the `sample.config.json` file as a template, put your Client ID and Client Secret in the designated location. Then, rename the file to `config.json`. This file is part of the `.gitignore` for your repository, so you won't accidentally push it up to the repo. 
 
@@ -41,7 +41,9 @@ python spreeper.py "https://open.spotify.com/playlist/2aOikiOH69uiC9VHIAODA6?si=
 
 ## Playlist cleaner (`cleaner.py`)
 
-Lists the playlists in your library and lets you delete, move, or rename the ones whose names match a pattern. It logs in as you, so the first run opens a browser to authorize the app; the token is cached in `.cache` (already git-ignored).
+Lists the playlists in your library and lets you delete, move, or rename the ones whose names match a pattern. It logs in as you, so the first run opens a browser to authorize the app; the token is cached in `.cache` (already git-ignored). Your app key alone isn't enough: changing your playlists requires your approval as a Spotify user.
+
+If Spotify shows **"redirect_uri: Not matching configuration"**, the redirect URI in your app's settings on the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) doesn't exactly match the one the cleaner sends (`http://127.0.0.1:7777/callback` unless you set `redirect_uri` in `config.json`). Add it under **Settings → Edit → Redirect URIs** and click **Save**. Spotify no longer accepts `localhost`. In Development Mode the app owner needs Premium, and any other account you log in with must be added under **User Management**.
 
 **Every write command is a dry run unless you add `--apply`.** With `--apply` it asks you to type `yes` first, unless you also add `--yes`.
 

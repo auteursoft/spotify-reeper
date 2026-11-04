@@ -463,14 +463,28 @@ def make_client(config):
     import spotipy
     from spotipy.oauth2 import SpotifyOAuth
 
+    redirect_uri = config.get("redirect_uri", DEFAULT_REDIRECT_URI)
     auth = SpotifyOAuth(
         client_id=config["client_id"],
         client_secret=config["client_secret"],
-        redirect_uri=config.get("redirect_uri", DEFAULT_REDIRECT_URI),
+        redirect_uri=redirect_uri,
         scope=SCOPES,
         open_browser=True,
     )
+    if not auth.validate_token(auth.cache_handler.get_cached_token()):
+        print(login_hint(redirect_uri), file=sys.stderr)
     return spotipy.Spotify(auth_manager=auth)
+
+
+def login_hint(redirect_uri):
+    return (
+        "Opening Spotify in your browser so you can approve access to your playlists.\n"
+        "This is needed once; the token is then saved in .cache.\n"
+        'If Spotify says "redirect_uri: Not matching configuration", add exactly\n'
+        f"    {redirect_uri}\n"
+        "under Redirect URIs in your app's settings at https://developer.spotify.com/dashboard\n"
+        "(then click Save), or set \"redirect_uri\" in config.json to one already registered.\n"
+    )
 
 
 def main(argv=None):
