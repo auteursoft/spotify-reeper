@@ -518,3 +518,25 @@ def test_shutdown_finishes_quick_requests_and_cancels_long_ones():
     Server({"moods.list": lambda job: "ok", "library.analyze": heavy}, inp=lines, out=out).run()
     assert out.final("1")["result"] == "ok" and out.final("2")["result"] == "ok"
     assert out.final("h")["code"] == "cancelled"
+
+
+def test_tags_only_edition_without_essentia(engine, monkeypatch):
+    """The App Store edition ships without Essentia: no audio, but everything else works."""
+    call, _, session = engine
+    from mood import audio as audio_mod
+    monkeypatch.setattr(audio_mod, "audio_supported", lambda: False)
+    status, _ = call("library.status")
+    assert status["audio_supported"] is False
+    assert session.args.no_audio is True
+    with pytest.raises(EngineError, match="tags only"):
+        call("models.download")
+    seed_lfg(call)
+    built, _ = call("mood.build", mood="Lets go", size=6, horizon=0)
+    assert len(built["picks"]) == 6
+    assert not any(w.startswith("sounds") for p in built["picks"] for w in p["why"])
+
+
+def test_audio_supported_detects_essentia():
+    from mood import audio as audio_mod
+    import importlib.util
+    assert audio_mod.audio_supported() == (importlib.util.find_spec("essentia") is not None)

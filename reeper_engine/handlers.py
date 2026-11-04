@@ -266,7 +266,8 @@ def build_handlers(session):
         try:
             return {"audio_analyzed": cache.count("audio"),
                     "tagged": cache.count("lastfm:track_tags"),
-                    "models_present": audio_mod.models_present(s.models_dir)}
+                    "models_present": audio_mod.models_present(s.models_dir),
+                    "audio_supported": audio_mod.audio_supported()}
         finally:
             cache.db.close()
 
@@ -327,10 +328,14 @@ def build_handlers(session):
     # ---------------- audio models ----------------
 
     def models_status(job, p):
-        return {"present": audio_mod.models_present(s.models_dir), "dir": s.models_dir}
+        return {"present": audio_mod.models_present(s.models_dir), "dir": s.models_dir,
+                "audio_supported": audio_mod.audio_supported()}
 
     def models_download(job, p):
         from mood.net import Http
+        if not audio_mod.audio_supported():
+            raise EngineError("user_error", "This edition of Reeper judges songs by tags only, "
+                              "so it has no audio models to download.")
         target = os.path.join(s.data_dir, "models")
         files = audio_mod.model_files()
         count = {"i": 0}

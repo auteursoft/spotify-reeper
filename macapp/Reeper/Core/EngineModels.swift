@@ -187,6 +187,8 @@ public struct LibraryStatus: Codable, Sendable {
     public var audioAnalyzed: Int
     public var tagged: Int
     public var modelsPresent: Bool
+    /// False in the tags-only edition (built without Essentia, e.g. for the Mac App Store).
+    public var audioSupported: Bool?
 }
 
 public struct AnalyzeResult: Codable, Sendable {
@@ -248,6 +250,7 @@ public struct CreatedPlaylist: Codable, Sendable {
 public struct ModelsStatus: Codable, Sendable {
     public var present: Bool
     public var dir: String
+    public var audioSupported: Bool?
 }
 
 public struct OK: Codable, Sendable { public var ok: Bool? }

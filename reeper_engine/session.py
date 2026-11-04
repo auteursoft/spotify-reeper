@@ -73,7 +73,8 @@ class Session:
     @property
     def args(self):
         """What mood.cli reads from its command-line arguments."""
-        return types.SimpleNamespace(no_audio=not self.config.get("use_audio", True),
+        use_audio = self.config.get("use_audio", True) and audio_mod.audio_supported()
+        return types.SimpleNamespace(no_audio=not use_audio,
                                      no_liked=not self.config.get("include_liked", True),
                                      limit=None)
 
@@ -128,7 +129,7 @@ class Session:
             if not key:
                 raise EngineError("not_configured", "Add your Last.fm API key in Settings.")
             analyzer = None
-            if self.config.get("use_audio", True):
+            if self.config.get("use_audio", True) and audio_mod.audio_supported():
                 try:
                     analyzer = audio_mod.AudioAnalyzer(self.models_dir)
                 except FileNotFoundError:
