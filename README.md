@@ -55,7 +55,7 @@ python cleaner.py move "2019" --to "2019 archive" --keep-source --apply   # copy
 python cleaner.py rename "^Old - " --regex --replace "Archive: " --apply
 ```
 
-Pattern options (all commands):
+Pattern options (all commands). An empty pattern is rejected, so an unset shell variable can't select everything:
 
 | Option | Meaning |
 |---|---|
@@ -69,7 +69,7 @@ Pattern options (all commands):
 What each command does on Spotify:
 
 - **delete** removes the playlist from your library. Spotify has no hard delete; a playlist you own can be restored for 90 days at <https://www.spotify.com/account/recover-playlists/>. Removing one you only follow just unfollows it.
-- **move** copies the tracks from every matching playlist into the `--to` playlist (created as a private playlist if you don't own one with that name), skipping tracks already there (`--no-dedupe` turns that off), then removes each source. A source is only removed after its tracks were added. Local files can't be added through the API and are skipped. The Spotify Web API has no access to playlist *folders*, so "move into a folder" isn't possible; this merges into a playlist instead.
+- **move** copies the tracks from every matching playlist into the `--to` playlist, skipping tracks already there (`--no-dedupe` turns that off), then removes each source. If you don't own a playlist with that name, a private one is created, but only after you confirm and only if there are tracks to add. A source is removed only once all of its tracks are in the destination: a source that is empty, or that contains local files or tracks no longer on Spotify (which the API can't add), is kept so you don't lose them. The Spotify Web API has no access to playlist *folders*, so "move into a folder" isn't possible; this merges into a playlist instead.
 - **rename** substitutes text in the names of playlists you own. With `--regex`, `\1` etc. refer to capture groups.
 
 Since Spotify's February 2026 API changes, track listings are only available for playlists you own or collaborate on, so `move` will report an error for a followed playlist you don't own and leave it alone. Your Spotify developer app's owner also needs Premium.

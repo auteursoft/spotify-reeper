@@ -65,10 +65,15 @@ def filter_playlists(playlists, pattern=None, mode="substring", case_sensitive=F
                      exclude=None, owner_id=None):
     """Return the playlists whose names match pattern and do not match exclude.
 
+    pattern=None means "no filter". An empty or blank pattern is rejected rather than
+    treated as "no filter", so an empty shell variable can never select every playlist.
     If owner_id is given, only playlists owned by that user are kept.
     """
-    include_re = compile_pattern(pattern, mode, case_sensitive) if pattern else None
-    exclude_re = compile_pattern(exclude, mode, case_sensitive) if exclude else None
+    for label, value in (("pattern", pattern), ("--exclude pattern", exclude)):
+        if value is not None and not value.strip():
+            raise ValueError(f"The {label} is empty. Pass a non-empty pattern.")
+    include_re = compile_pattern(pattern, mode, case_sensitive) if pattern is not None else None
+    exclude_re = compile_pattern(exclude, mode, case_sensitive) if exclude is not None else None
     result = []
     for pl in playlists:
         name = pl.get("name") or ""
@@ -121,16 +126,19 @@ def fetch_all_playlists(sp):
 
 
 def fetch_playlist_uris(sp, playlist_id):
-    """Track/episode URIs in a playlist, in order. Local files and missing items are skipped,
-    because the API cannot add them to another playlist."""
-    uris = []
+    """Return (uris, skipped): the addable track/episode URIs in a playlist, in order, and
+    how many entries were skipped because the API cannot add them to another playlist
+    (local files, and entries whose track is no longer available)."""
+    uris, skipped = [], 0
     for entry in paginate(sp, sp.playlist_items(playlist_id, limit=50)):
-        item = entry_item(entry or {})
+        entry = entry or {}
+        item = entry_item(entry)
         uri = (item or {}).get("uri")
         if not uri or uri.startswith("spotify:local:") or entry.get("is_local"):
+            skipped += 1
             continue
         uris.append(uri)
-    return uris
+    return uris, skipped
 
 
 # --------------------------------------------------------------------------
@@ -155,20 +163,20 @@ def remove_playlist(sp, playlist):
         sp._delete("me/library", uris=playlist.get("uri") or f"spotify:playlist:{playlist['id']}")
 
 
-def find_or_create_destination(sp, playlists, name, user_id, dry_run):
-    """Find the user's own playlist called `name` (case-insensitive), or create it."""
+def find_destination(playlists, name, user_id):
+    """The user's own playlist called `name` (case-insensitive), or None if there isn't one.
+    Never creates anything: the caller creates it only once it knows tracks will be added."""
     owned = [pl for pl in playlists
              if playlist_owner_id(pl) == user_id and (pl.get("name") or "").lower() == name.lower()]
     if len(owned) > 1:
         raise SystemExit(f'You own {len(owned)} playlists named "{name}". '
                          "Rename one so the destination is unambiguous.")
-    if owned:
-        return owned[0], False
-    if dry_run:
-        return {"id": None, "name": name, "owner": {"id": user_id}}, True
-    created = sp.current_user_playlist_create(
+    return owned[0] if owned else None
+
+
+def create_destination(sp, name):
+    return sp.current_user_playlist_create(
         name, public=False, description="Created by spotify-reeper cleaner")
-    return created, True
 
 
 def add_uris(sp, playlist_id, uris):
@@ -253,18 +261,21 @@ def cmd_delete(sp, args, user_id):
 
 def cmd_move(sp, args, user_id):
     all_playlists = fetch_all_playlists(sp)
-    dest, is_new = find_or_create_destination(sp, all_playlists, args.to, user_id,
-                                              dry_run=not args.apply)
+    dest = find_destination(all_playlists, args.to, user_id)
     sources = [pl for pl in select(sp, args, user_id, all_playlists)
-               if not dest.get("id") or pl.get("id") != dest["id"]]
+               if dest is None or pl.get("id") != dest["id"]]
     print_table(sources)
     if not sources:
         return 0
-    state = "new playlist" if is_new else "existing playlist"
     action = "copied into" if args.keep_source else "moved into"
-    print(f'\nTracks will be {action} "{args.to}" ({state}).')
+    if dest:
+        print(f'\nTracks will be {action} your existing playlist "{dest["name"]}".')
+    else:
+        print(f'\nTracks will be {action} a new private playlist "{args.to}" '
+              "(created only if there are tracks to add).")
     if not args.keep_source:
-        print("Source playlists will then be removed from your library.")
+        print("Each source is then removed from your library, except sources that are empty or "
+              "contain local files or unavailable tracks, which can't be moved and are kept.")
     if not args.apply:
         print("Dry run: nothing changed. Re-run with --apply to do it.")
         return 0
@@ -272,11 +283,32 @@ def cmd_move(sp, args, user_id):
         print("Aborted.")
         return 1
 
-    existing = set(fetch_playlist_uris(sp, dest["id"])) if not is_new else set()
+    # Read every source before writing anything, so a read failure can't leave a
+    # half-built destination behind.
     failures = 0
+    plan = []
     for pl in sources:
         try:
-            uris = fetch_playlist_uris(sp, pl["id"])
+            uris, skipped = fetch_playlist_uris(sp, pl["id"])
+        except Exception as err:
+            failures += 1
+            print(f"  FAILED   {pl['name']}: could not read tracks: {err}", file=sys.stderr)
+            continue
+        plan.append((pl, uris, skipped))
+
+    if not any(uris for _, uris, _ in plan):
+        print("No tracks to add, so nothing was changed.")
+        return 1 if failures else 0
+
+    if dest is None:
+        dest = create_destination(sp, args.to)
+        existing = set()
+        print(f'  created  "{dest["name"]}"')
+    else:
+        existing = set(fetch_playlist_uris(sp, dest["id"])[0])
+
+    for pl, uris, skipped in plan:
+        try:
             new = dedupe(uris, existing) if args.dedupe else uris
             add_uris(sp, dest["id"], new)
             existing.update(new)
@@ -284,11 +316,19 @@ def cmd_move(sp, args, user_id):
             if len(new) != len(uris):
                 msg += f" ({len(uris) - len(new)} duplicates skipped)"
             print(msg)
-            if not args.keep_source:
+            if args.keep_source:
+                continue
+            # Only remove a source when every one of its entries is now in the destination.
+            if skipped:
+                print(f"        kept {pl['name']}: {skipped} local file(s) or unavailable "
+                      "track(s) can't be moved through the API")
+            elif not uris:
+                print(f"        kept {pl['name']}: it has no tracks")
+            else:
                 remove_playlist(sp, pl)
                 print(f"        removed {pl['name']}")
         except Exception as err:
-            # The source is only removed after its tracks were added, so a failure never loses tracks.
+            # A source is only removed after its tracks were added, so a failure never loses tracks.
             failures += 1
             print(f"  FAILED   {pl['name']}: {err}", file=sys.stderr)
     return 1 if failures else 0
@@ -402,6 +442,15 @@ def build_parser():
     return parser
 
 
+def validate_patterns(args):
+    """Reject empty or invalid patterns before logging in or touching anything."""
+    try:
+        filter_playlists([], getattr(args, "pattern", None), args.match,
+                         args.case_sensitive, args.exclude)
+    except (ValueError, re.error) as err:
+        raise SystemExit(f"Error: {err}")
+
+
 def load_config(path):
     try:
         with open(path) as f:
@@ -426,6 +475,7 @@ def make_client(config):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    validate_patterns(args)
     sp = make_client(load_config(args.config))
     user_id = sp.current_user()["id"]
     return args.func(sp, args, user_id)
