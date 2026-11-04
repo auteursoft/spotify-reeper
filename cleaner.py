@@ -324,7 +324,12 @@ def cmd_move(sp, args, user_id):
         existing = set()
         print(f'  created  "{dest["name"]}"')
     else:
-        existing = set(fetch_playlist_uris(sp, dest["id"])[0])
+        try:
+            existing = set(fetch_playlist_uris(sp, dest["id"])[0])
+        except Exception as err:
+            print(f'  FAILED   could not read destination "{dest["name"]}": {err}\n'
+                  "No changes were made.", file=sys.stderr)
+            return 1
 
     for pl, uris, skipped in plan:
         try:
@@ -353,16 +358,19 @@ def cmd_move(sp, args, user_id):
     return 1 if failures else 0
 
 
-def rename_preview(regex, replacement):
-    return lambda pl: regex.sub(replacement, pl.get("name") or "")
+def rename_preview(regex, replacement, mode):
+    """Function giving a playlist's new name. In substring mode the replacement is literal
+    text; with --regex it is a template where \\1, \\g<name> refer to groups."""
+    repl = (lambda m: replacement) if mode == "substring" else replacement
+    return lambda pl: regex.sub(repl, pl.get("name") or "")
 
 
 def cmd_rename(sp, args, user_id):
     regex = compile_pattern(args.pattern, args.match, args.case_sensitive)
+    preview = rename_preview(regex, args.replace, args.match)
     # Only playlists you own can be renamed.
     targets = [pl for pl in select(sp, args, user_id, owned_only=True)
-               if regex.sub(args.replace, pl.get("name") or "") != pl.get("name")]
-    preview = rename_preview(regex, args.replace)
+               if preview(pl) != pl.get("name")]
     print_table(targets, extra=preview)
     if not targets:
         return 0
@@ -478,6 +486,11 @@ def validate_patterns(args):
     try:
         filter_playlists([], getattr(args, "pattern", None), args.match,
                          args.case_sensitive, args.exclude, visibility=args.visibility)
+        if args.command == "rename":
+            # Python checks the replacement template on use, even when nothing matches,
+            # so one trial substitution catches e.g. \1 with no capture group.
+            regex = compile_pattern(args.pattern, args.match, args.case_sensitive)
+            rename_preview(regex, args.replace, args.match)({"name": ""})
     except (ValueError, re.error) as err:
         raise SystemExit(f"Error: {err}")
 

@@ -271,6 +271,8 @@ def test_omitted_pattern_still_lists_everything():
     ["rename", "*", "--glob", "--replace", "x", "--apply", "--yes"],
     ["delete", "--apply", "--yes"],                 # no pattern and no visibility
     ["delete", "--mine", "--apply", "--yes"],
+    ["rename", "workout", "--regex", "--replace", r"\1", "--apply", "--yes"],   # no group 1
+    ["rename", "(w)", "--regex", "--replace", r"\g<x", "--apply", "--yes"],    # bad syntax
 ])
 def test_cli_rejects_bad_patterns_before_logging_in(argv, monkeypatch):
     def no_login(*a, **k):
@@ -414,3 +416,55 @@ def test_delete_by_visibility_is_a_dry_run_without_apply():
 def test_public_and_private_are_mutually_exclusive():
     with pytest.raises(SystemExit):
         cleaner.build_parser().parse_args(["list", "--public", "--private"])
+
+
+# ---------------- third Copilot review ----------------
+
+def test_delete_fallback_with_real_spotipy_client():
+    """Runs remove_playlist against the real spotipy client with only the HTTP layer faked,
+    to check the /me/library fallback sends `uris` as a query parameter."""
+    import requests
+    from unittest import mock
+
+    sent = []
+
+    def fake_request(method, url, headers=None, proxies=None, timeout=None, **kw):
+        sent.append((method, url, kw.get("params")))
+        resp = mock.Mock(status_code=403 if url.endswith("/followers") else 200,
+                         text="", url=url, headers={}, reason="")
+        resp.json.return_value = {"error": {"message": "Forbidden"}}
+
+        def raise_for_status():
+            if resp.status_code >= 400:
+                raise requests.exceptions.HTTPError(response=resp)
+        resp.raise_for_status = raise_for_status
+        return resp
+
+    sp = spotipy.Spotify(auth="fake-token", retries=0)
+    sp._session.request = fake_request
+    cleaner.remove_playlist(sp, {"id": "abc", "uri": "spotify:playlist:abc"})
+    assert sent == [
+        ("DELETE", "https://api.spotify.com/v1/playlists/abc/followers", {}),
+        ("DELETE", "https://api.spotify.com/v1/me/library", {"uris": "spotify:playlist:abc"}),
+    ]
+
+
+def test_move_destination_read_failure_changes_nothing(capsys):
+    library = LIBRARY + [pl("g", "Gym")]
+    sp = FakeSpotify(library, {"a": ["spotify:track:1"], "g": []})
+    sp.unreadable = {"g"}
+    assert run(sp, "move", "2019", "--to", "Gym", "--apply", "--yes") == 1
+    assert sp.adds == [] and sp.removed == [] and sp.created == []
+    assert "could not read destination" in capsys.readouterr().err
+
+
+def test_rename_regex_groups():
+    sp = FakeSpotify([pl("x", "Workout 2019")])
+    run(sp, "rename", r"(\w+) (\d+)", "--regex", "--replace", r"\2 \1", "--apply", "--yes")
+    assert sp.renamed == [("x", "2019 Workout")]
+
+
+def test_rename_substring_replacement_is_literal():
+    sp = FakeSpotify([pl("x", "Workout 2019")])
+    run(sp, "rename", "2019", "--replace", r"\1 C:\new", "--apply", "--yes")
+    assert sp.renamed == [("x", r"Workout \1 C:\new")]
