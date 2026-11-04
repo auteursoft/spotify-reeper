@@ -740,3 +740,29 @@ def test_shipped_lfg_mood_uses_the_playlist():
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "moods.json")
     entries = json.load(open(path))["lets fucking go"]["seed_playlists"]
     assert any(LFG_ID in e for e in entries)
+
+
+# ======================= output =======================
+
+def test_quiet_native_stderr_silences_fd2_and_restores_it(capfd, monkeypatch):
+    monkeypatch.delenv("REEPER_DEBUG", raising=False)
+    with audio.quiet_native_stderr():
+        os.write(2, b"I0000 MLIR V1 optimization pass is not enabled\n")
+    os.write(2, b"after\n")
+    err = capfd.readouterr().err
+    assert "MLIR" not in err and "after" in err
+
+
+def test_quiet_native_stderr_lets_exceptions_through(capfd):
+    with pytest.raises(ValueError):
+        with audio.quiet_native_stderr():
+            raise ValueError("bad preview")
+    os.write(2, b"still here\n")
+    assert "still here" in capfd.readouterr().err
+
+
+def test_seeds_command_reports_progress(e2e, capsys):
+    _, base = e2e
+    cli.main(["seeds", "lets go"] + base)
+    err = capsys.readouterr().err
+    assert "Analyzing 6 seed songs" in err and "[1/6]" in err and "[6/6]" in err

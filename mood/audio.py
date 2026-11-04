@@ -8,8 +8,10 @@ mood/theme tags from the MTG-Jamendo dataset (energetic, romantic, sexy, calm, h
 Models: https://essentia.upf.edu/models.html (CC BY-NC-SA 4.0, non-commercial use).
 """
 
+import contextlib
 import json
 import os
+import sys
 
 MODELS_BASE = "https://essentia.upf.edu/models"
 DEFAULT_MODEL_DIR = "models"
@@ -67,6 +69,29 @@ def models_present(model_dir):
     return all(os.path.exists(os.path.join(model_dir, name)) for name, _ in model_files())
 
 
+@contextlib.contextmanager
+def quiet_native_stderr():
+    """Silence TensorFlow's C++ log lines ("I0000 ... MLIR V1 optimization pass ...").
+
+    They are written straight to file descriptor 2, so redirecting sys.stderr can't stop
+    them. Python exceptions still propagate. Set REEPER_DEBUG=1 to see the messages.
+    """
+    if os.environ.get("REEPER_DEBUG"):
+        yield
+        return
+    sys.stderr.flush()
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        sys.stderr.flush()
+        os.dup2(saved, 2)
+        os.close(saved)
+        os.close(devnull)
+
+
 def _meta(model_dir, stem):
     with open(os.path.join(model_dir, stem + ".json")) as f:
         return json.load(f)
@@ -94,7 +119,11 @@ class AudioAnalyzer:
         if not models_present(model_dir):
             raise FileNotFoundError(
                 f"Audio models missing from {model_dir}/. Run: python moods.py setup")
-        os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+        os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+        with quiet_native_stderr():
+            self._load(model_dir)
+
+    def _load(self, model_dir):
         import essentia
         import essentia.standard as es
         essentia.log.infoActive = False
@@ -122,6 +151,10 @@ class AudioAnalyzer:
 
     def analyze(self, path):
         """Audio file -> {"moods": {feature: probability}, "embedding": [1280 floats]}."""
+        with quiet_native_stderr():
+            return self._analyze(path)
+
+    def _analyze(self, path):
         audio = self.es.MonoLoader(filename=path, sampleRate=SAMPLE_RATE, resampleQuality=4)()
         if len(audio) < SAMPLE_RATE * MIN_SECONDS:
             raise ValueError(f"preview too short ({len(audio) / SAMPLE_RATE:.1f}s)")

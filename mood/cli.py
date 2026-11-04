@@ -4,6 +4,7 @@ import argparse
 import datetime
 import json
 import sys
+import time
 
 from cleaner import add_uris, confirm, load_config
 
@@ -70,6 +71,7 @@ class Context:
     def sp(self):
         if self._sp is None:
             from cleaner import make_client
+            log("Connecting to Spotify...")
             self._sp = make_client(self.config)
             self._user = self._sp.current_user()["id"]
         return self._sp
@@ -88,6 +90,7 @@ class Context:
             lastfm = LastFM(self.config.get("lastfm_api_key"), self.cache)
             analyzer = None
             if not self.args.no_audio:
+                log("Loading audio models...")
                 try:
                     analyzer = audio_mod.AudioAnalyzer(self.args.models)
                 except (FileNotFoundError, ImportError) as err:
@@ -95,12 +98,21 @@ class Context:
             self._profiler = Profiler(self.cache, lastfm, Deezer(self.cache), analyzer, log=log)
         return self._profiler
 
-    def profile_all(self, tracks, what="tracks"):
-        out = []
+    def profile_all(self, tracks, what="tracks", each=False):
+        """Profile tracks, reporting progress: every track if `each`, otherwise every 25
+        tracks or 15 seconds. Cached tracks are instant; new ones take a second or two."""
+        out, n = [], len(tracks)
+        profiler = self.profiler  # loads the models before the progress lines start
+        if n:
+            log(f"Analyzing {n} {what} (new ones take a second or two; results are cached)...")
+        last = time.monotonic()
         for i, t in enumerate(tracks, 1):
-            out.append(self.profiler.profile(t["main_artist"], t["title"], t.get("isrc")))
-            if i % 25 == 0 or i == len(tracks):
-                log(f"  analyzed {i}/{len(tracks)} {what}")
+            if each:
+                log(f"  [{i}/{n}] {t['artist']} - {t['title']}")
+            out.append(profiler.profile(t["main_artist"], t["title"], t.get("isrc")))
+            if not each and (i % 25 == 0 or i == n or time.monotonic() - last > 15):
+                log(f"  {i}/{n} {what}")
+                last = time.monotonic()
         return out
 
 
@@ -109,6 +121,8 @@ def load_seeds(ctx, mood):
     from .library import resolve_seed, seed_playlist_tracks
 
     seeds, problems = [], []
+    if mood.get("seeds"):
+        log(f"Finding {len(mood['seeds'])} seed songs on Spotify...")
     for seed in mood.get("seeds") or []:
         t = resolve_seed(ctx.sp, seed)
         if t is None and isinstance(seed, dict) and seed.get("artist") and seed.get("title"):
@@ -122,6 +136,7 @@ def load_seeds(ctx, mood):
         seeds.append(t)
     entries = mood.get("seed_playlists") or []
     if entries:
+        log(f"Reading {len(entries)} seed playlist(s)...")
         found, playlist_problems = seed_playlist_tracks(ctx.sp, entries)
         problems += playlist_problems
         seeds += found
@@ -139,7 +154,7 @@ def train(ctx, mood_name, mood, library):
         log(f"  note: {p}")
     if not seeds:
         raise SystemExit(f'"{mood_name}" has no seed songs yet. Add some to the moods file.')
-    seed_profiles = ctx.profile_all(seeds, "seed songs")
+    seed_profiles = ctx.profile_all(seeds, "seed songs", each=True)
     seed_keys = {p["key"] for p in seed_profiles}
     lib_profiles = ctx.profile_all(library, "library tracks")
     negatives = [p for p in lib_profiles if p["key"] not in seed_keys]
@@ -185,12 +200,11 @@ def cmd_seeds(ctx):
     mood_name, mood = get_mood(load_moods(ctx.args.moods), ctx.args.mood)
     seeds, problems = load_seeds(ctx, mood)
     rows = []
-    for t in seeds:
-        p = ctx.profiler.profile(t["main_artist"], t["title"], t.get("isrc"))
+    for t, p in zip(seeds, ctx.profile_all(seeds, "seed songs", each=True)):
         tags = ", ".join(sorted(p["tags"], key=lambda k: -p["tags"][k])[:4])
         rows.append([t["title"], t["artist"], "yes" if t.get("uri") else "NO",
                      f"{tags} ({p['tag_source']})" if tags else "none", p["audio_status"]])
-    print(f'Seeds for "{mood_name}":\n')
+    print(f'\nSeeds for "{mood_name}" ({len(rows)} songs):\n')
     table(rows, ["Title", "Artist", "On Spotify", "Last.fm tags", "Audio"])
     for p in problems:
         print(f"note: {p}")
