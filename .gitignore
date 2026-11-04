@@ -182,3 +182,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Mood playlists: audio models and analysis cache
+models/
+reeper-cache.db
