@@ -63,19 +63,52 @@ def library_tracks(sp, user_id, include_liked=True, log=print):
     return list(tracks.values())
 
 
-def playlist_tracks_by_name(sp, user_id, names):
-    """Tracks of your playlists whose names match any of `names` (case-insensitive, exact)."""
+_PLAYLIST_ID = re.compile(r"(?:spotify:playlist:|open\.spotify\.com/playlist/)([A-Za-z0-9]{22})")
+
+
+def seed_playlist_tracks(sp, entries):
+    """Tracks from seed playlists. Each entry is a Spotify playlist link or URI, or the exact
+    name of a playlist in your library (case-insensitive).
+
+    Returns (tracks, problems). Spotify only lets apps read the tracks of playlists you own or
+    collaborate on, so someone else's playlist is reported as a problem rather than read.
+    """
     from cleaner import fetch_all_playlists
 
-    wanted = {fold(n) for n in names}
-    out = []
-    for pl in fetch_all_playlists(sp):
-        if fold(pl.get("name")) in wanted:
-            for entry in paginate(sp, sp.playlist_items(pl["id"], limit=50)):
-                t = to_track(entry_item(entry or {}), pl.get("name"))
-                if t:
-                    out.append(t)
-    return out
+    tracks, problems, by_name = [], [], None
+    for entry in entries:
+        m = _PLAYLIST_ID.search(entry)
+        if m:
+            targets = [{"id": m.group(1), "name": entry}]
+        else:
+            if by_name is None:
+                by_name = fetch_all_playlists(sp)
+            targets = [p for p in by_name if fold(p.get("name")) == fold(entry)]
+            if not targets:
+                problems.append(f'no playlist named "{entry}" in your library')
+                continue
+        for pl in targets:
+            name = pl["name"]
+            if m:  # a link: look up its display name, but don't fail over it
+                try:
+                    name = (sp.playlist(pl["id"], fields="name") or {}).get("name") or entry
+                except Exception:
+                    pass
+            try:
+                found = [to_track(entry_item(e or {}), name)
+                         for e in paginate(sp, sp.playlist_items(pl["id"], limit=50))]
+            except Exception as err:
+                status = getattr(err, "http_status", None)
+                why = (" Spotify only lets apps read playlists you own or collaborate on; "
+                       "copy its songs into a playlist of your own and use that."
+                       if status in (403, 404) else "")
+                problems.append(f"could not read seed playlist {entry}: {err}.{why}")
+                continue
+            found = [t for t in found if t]
+            if not found:
+                problems.append(f"seed playlist {name} has no usable tracks")
+            tracks += found
+    return tracks, problems
 
 
 _SPOTIFY_ID = re.compile(r"(?:spotify:track:|open\.spotify\.com/track/)([A-Za-z0-9]{22})")

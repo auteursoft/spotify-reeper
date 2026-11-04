@@ -106,7 +106,7 @@ class Context:
 
 def load_seeds(ctx, mood):
     """Resolve the mood's seed songs (and seed playlists) to tracks."""
-    from .library import playlist_tracks_by_name, resolve_seed
+    from .library import resolve_seed, seed_playlist_tracks
 
     seeds, problems = [], []
     for seed in mood.get("seeds") or []:
@@ -120,11 +120,10 @@ def load_seeds(ctx, mood):
             problems.append(f"could not use seed: {seed}")
             continue
         seeds.append(t)
-    names = mood.get("seed_playlists") or []
-    if names:
-        found = playlist_tracks_by_name(ctx.sp, ctx.user_id, names)
-        if not found:
-            problems.append(f"no tracks found in seed playlists {names}")
+    entries = mood.get("seed_playlists") or []
+    if entries:
+        found, playlist_problems = seed_playlist_tracks(ctx.sp, entries)
+        problems += playlist_problems
         seeds += found
     unique = {}
     for t in seeds:

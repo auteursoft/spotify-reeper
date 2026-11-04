@@ -11,7 +11,7 @@
             {"artist": "The Knack", "title": "My Sharona"},
             {"artist": "The English Beat", "title": "Save It for Later - 2012 Remaster"}
         ],
-        "seed_playlists": []
+        "seed_playlists": ["https://open.spotify.com/playlist/4KIAT34SSNCFOFnA7yFlhI"]
     },
     "romantic": {
         "seeds": [],

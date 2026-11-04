@@ -108,7 +108,7 @@ Your seed songs are the core of each mood. Songs from outside your library are f
 
 ### Defining moods
 
-Moods live in `moods.json`. Each mood has seed songs (artist and title as they appear on Spotify, or a Spotify track link) and optionally whole playlists whose songs all count as seeds:
+Moods live in `moods.json`. Each mood has seed songs (artist and title as they appear on Spotify, or a Spotify track link) and optionally whole playlists whose songs all count as seeds. A seed playlist can be a Spotify playlist link or the exact name of a playlist in your library. Spotify only lets apps read playlists you own or collaborate on, so to train on someone else's playlist, copy its songs into one of your own first.
 
 ```json
 {
@@ -117,7 +117,7 @@ Moods live in `moods.json`. Each mood has seed songs (artist and title as they a
             {"artist": "The Knack", "title": "My Sharona"},
             "https://open.spotify.com/track/..."
         ],
-        "seed_playlists": ["zb- gym"]
+        "seed_playlists": ["https://open.spotify.com/playlist/...", "zb- gym"]
     }
 }
 ```

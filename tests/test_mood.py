@@ -671,3 +671,72 @@ def test_shipped_moods_file_is_valid():
     moods = json.load(open(path))
     assert {"lets fucking go", "romantic", "chill and work in the garage"} <= set(moods)
     assert len(moods["lets fucking go"]["seeds"]) == 9
+
+
+# ======================= seed playlists =======================
+
+class PlaylistSpotify:
+    def __init__(self, contents, names, forbidden=(), name_lookup_fails=False):
+        self.contents, self.names = contents, names
+        self.forbidden, self.name_lookup_fails = set(forbidden), name_lookup_fails
+        self.read = []
+
+    def current_user_playlists(self, limit=50):
+        return {"items": [{"id": i, "name": n, "owner": {"id": "me"}} for i, n in self.names.items()],
+                "next": None}
+
+    def next(self, page):
+        return None
+
+    def playlist(self, pid, fields=None):
+        if self.name_lookup_fails:
+            raise RuntimeError("nope")
+        return {"name": self.names.get(pid, "Linked list")}
+
+    def playlist_items(self, pid, limit=50):
+        if pid in self.forbidden:
+            import spotipy
+            raise spotipy.SpotifyException(403, -1, "Forbidden")
+        self.read.append(pid)
+        return {"items": [{"item": t} for t in self.contents.get(pid, [])], "next": None}
+
+
+LFG_ID = "4KIAT34SSNCFOFnA7yFlhI"
+
+
+@pytest.mark.parametrize("entry", [
+    f"https://open.spotify.com/playlist/{LFG_ID}?si=cc3e9ea86d074325",
+    f"spotify:playlist:{LFG_ID}",
+])
+def test_seed_playlist_by_link(entry):
+    sp = PlaylistSpotify({LFG_ID: [sp_track("Kids in America", "Kim Wilde")]}, {LFG_ID: "LFG"})
+    tracks, problems = library.seed_playlist_tracks(sp, [entry])
+    assert [t["title"] for t in tracks] == ["Kids in America"] and problems == []
+    assert tracks[0]["playlists"] == ["LFG"]
+
+
+def test_seed_playlist_by_name_and_missing_name():
+    sp = PlaylistSpotify({"p1": [sp_track("A", "B")]}, {"p1": "zb- Gym"})
+    tracks, problems = library.seed_playlist_tracks(sp, ["ZB- gym", "no such list"])
+    assert len(tracks) == 1
+    assert problems == ['no playlist named "no such list" in your library']
+
+
+def test_seed_playlist_someone_elses_is_explained_not_fatal():
+    sp = PlaylistSpotify({"ok": [sp_track("A", "B")]}, {"ok": "Mine"}, forbidden={LFG_ID})
+    tracks, problems = library.seed_playlist_tracks(
+        sp, [f"spotify:playlist:{LFG_ID}", "Mine"])
+    assert len(tracks) == 1
+    assert len(problems) == 1 and "own or collaborate on" in problems[0]
+
+
+def test_seed_playlist_name_lookup_failure_still_reads_tracks():
+    sp = PlaylistSpotify({LFG_ID: [sp_track("A", "B")]}, {}, name_lookup_fails=True)
+    tracks, problems = library.seed_playlist_tracks(sp, [f"spotify:playlist:{LFG_ID}"])
+    assert len(tracks) == 1 and problems == []
+
+
+def test_shipped_lfg_mood_uses_the_playlist():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "moods.json")
+    entries = json.load(open(path))["lets fucking go"]["seed_playlists"]
+    assert any(LFG_ID in e for e in entries)
