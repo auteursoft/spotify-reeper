@@ -302,59 +302,101 @@ def cmd_move(sp, args, user_id):
         print("Aborted.")
         return 1
 
-    # Read every source before writing anything, so a read failure can't leave a
-    # half-built destination behind.
-    failures = 0
+    result = execute_move(sp, sources, dest, args.to, args.keep_source, args.dedupe)
+    return print_move_result(result)
+
+
+def execute_move(sp, sources, dest, dest_name, keep_source=False, do_dedupe=True):
+    """Merge the tracks of `sources` into `dest` (or a new playlist called dest_name), then
+    remove each source whose every entry is now in the destination (unless keep_source).
+
+    Every source is read before anything is written, a new destination is only created if
+    there is something to add, and a source is only removed after its tracks were added.
+    Returns {"destination": {...} or None, "created": bool, "outcomes": [...], "error": str|None}.
+    Each outcome: {"playlist", "status": moved|copied|kept|failed, "added", "duplicates",
+    "reason"}.
+    """
+    result = {"destination": dest, "created": False, "outcomes": [], "error": None}
     plan = []
     for pl in sources:
         try:
             uris, skipped = fetch_playlist_uris(sp, pl["id"])
         except Exception as err:
-            failures += 1
-            print(f"  FAILED   {pl['name']}: could not read tracks: {err}", file=sys.stderr)
+            result["outcomes"].append(_outcome(pl, "failed", reason=f"could not read tracks: {err}"))
             continue
         plan.append((pl, uris, skipped))
 
     if not any(uris for _, uris, _ in plan):
-        print("No tracks to add, so nothing was changed.")
-        return 1 if failures else 0
+        result["error"] = "nothing_to_add"
+        return result
 
     if dest is None:
-        dest = create_destination(sp, args.to)
+        dest = create_destination(sp, dest_name)
+        result.update(destination=dest, created=True)
         existing = set()
-        print(f'  created  "{dest["name"]}"')
     else:
         try:
             existing = set(fetch_playlist_uris(sp, dest["id"])[0])
         except Exception as err:
-            print(f'  FAILED   could not read destination "{dest["name"]}": {err}\n'
-                  "No changes were made.", file=sys.stderr)
-            return 1
+            result["error"] = f'could not read destination "{dest["name"]}": {err}'
+            return result
 
     for pl, uris, skipped in plan:
         try:
-            new = dedupe(uris, existing) if args.dedupe else uris
+            new = dedupe(uris, existing) if do_dedupe else uris
             add_uris(sp, dest["id"], new)
             existing.update(new)
-            msg = f"  {len(new):>4} added  from {pl['name']}"
-            if len(new) != len(uris):
-                msg += f" ({len(uris) - len(new)} duplicates skipped)"
-            print(msg)
-            if args.keep_source:
-                continue
+            counts = {"added": len(new), "duplicates": len(uris) - len(new)}
+            if keep_source:
+                result["outcomes"].append(_outcome(pl, "copied", **counts))
             # Only remove a source when every one of its entries is now in the destination.
-            if skipped:
-                print(f"        kept {pl['name']}: {skipped} local file(s) or unavailable "
-                      "track(s) can't be moved through the API")
+            elif skipped:
+                result["outcomes"].append(_outcome(
+                    pl, "kept", reason=f"{skipped} local file(s) or unavailable track(s) can't be "
+                    "moved through the API", **counts))
             elif not uris:
-                print(f"        kept {pl['name']}: it has no tracks")
+                result["outcomes"].append(_outcome(pl, "kept", reason="it has no tracks", **counts))
             else:
                 remove_playlist(sp, pl)
-                print(f"        removed {pl['name']}")
+                result["outcomes"].append(_outcome(pl, "moved", **counts))
         except Exception as err:
             # A source is only removed after its tracks were added, so a failure never loses tracks.
+            result["outcomes"].append(_outcome(pl, "failed", reason=str(err)))
+    return result
+
+
+def _outcome(pl, status, added=0, duplicates=0, reason=None):
+    return {"playlist": pl, "status": status, "added": added, "duplicates": duplicates,
+            "reason": reason}
+
+
+def print_move_result(result):
+    failures = 0
+    if result["error"] == "nothing_to_add":
+        for o in result["outcomes"]:
             failures += 1
-            print(f"  FAILED   {pl['name']}: {err}", file=sys.stderr)
+            print(f"  FAILED   {o['playlist']['name']}: {o['reason']}", file=sys.stderr)
+        print("No tracks to add, so nothing was changed.")
+        return 1 if failures else 0
+    if result["error"]:
+        print(f"  FAILED   {result['error']}\nNo changes were made.", file=sys.stderr)
+        return 1
+    if result["created"]:
+        print(f'  created  "{result["destination"]["name"]}"')
+    for o in result["outcomes"]:
+        name = o["playlist"]["name"]
+        if o["status"] == "failed":
+            failures += 1
+            print(f"  FAILED   {name}: {o['reason']}", file=sys.stderr)
+            continue
+        msg = f"  {o['added']:>4} added  from {name}"
+        if o["duplicates"]:
+            msg += f" ({o['duplicates']} duplicates skipped)"
+        print(msg)
+        if o["status"] == "kept":
+            print(f"        kept {name}: {o['reason']}")
+        elif o["status"] == "moved":
+            print(f"        removed {name}")
     return 1 if failures else 0
 
 
