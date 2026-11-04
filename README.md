@@ -83,4 +83,4 @@ python -m pytest tests
 
 The tests use a fake Spotify client, so they need no credentials and change nothing in your account.
 
-© 2025, Professor Doctor Sean P. Goggins, the Dork Union, and ["Mr. Hand's Songs of Spicolli"](https://open.spotify.com/playlist/2aOikiOH69uiC9VHIAODA6?si=d9c7ac2492bf43fa), which is also listed in the [`playlist.md`](playlist.md) file. Playlist generated using [*spotify-reeper*](https://github.com/auteursoft/spotify-reeper.git)
+© 2026, Professor Doctor Sean P. Goggins, the Dork Union, and ["Mr. Hand's Songs of Spicolli"](https://open.spotify.com/playlist/2aOikiOH69uiC9VHIAODA6?si=d9c7ac2492bf43fa), which is also listed in the [`playlist.md`](playlist.md) file. Playlist generated using [*spotify-reeper*](https://github.com/auteursoft/spotify-reeper.git)
