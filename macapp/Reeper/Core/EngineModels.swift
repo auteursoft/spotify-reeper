@@ -201,7 +201,8 @@ public struct AnalyzeResult: Codable, Sendable {
 public struct MoodSummary: Codable, Sendable {
     public var moreOf: [String]
     public var lessOf: [String]
-    public var soundWeight: Double
+    /// Share (0...1) of the model's weight on the overall sound, beyond the named qualities.
+    public var soundShare: Double
     public var seedsUsed: Int
     public var comparedWith: Int
 }

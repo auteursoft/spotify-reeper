@@ -371,14 +371,14 @@ struct InsightsTab: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     VerdictBanner(result: r)
+                    Text("What sets your \(r.summary.seedsUsed) seed songs apart from the other \(r.summary.comparedWith) tracks in your library.")
+                        .font(.callout).foregroundStyle(.secondary)
                     GroupBox("More of") { ChipFlow(items: r.summary.moreOf, tint: .green) }
                     GroupBox("Less of") { ChipFlow(items: r.summary.lessOf, tint: .red) }
-                    if r.summary.soundWeight > 0 {
-                        Text("Beyond these named qualities, the overall sound of a track also counts.")
+                    if r.summary.soundShare >= 0.05 {
+                        Text("Beyond these, the overall sound of a track carries about \(Int((r.summary.soundShare * 100).rounded()))% of the model's weight.")
                             .font(.callout).foregroundStyle(.secondary)
                     }
-                    Text("Learned from \(r.summary.seedsUsed) seed songs, compared with \(r.summary.comparedWith) other tracks in your library.")
-                        .font(.callout).foregroundStyle(.secondary)
                     if !r.check.isEmpty {
                         GroupBox("Check: each seed left out, then ranked against your library") {
                             Table(r.check) {
@@ -453,7 +453,7 @@ struct ChipFlow: View {
 
     var body: some View {
         if items.isEmpty {
-            Text("Nothing stands out").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            Text("Nothing clear-cut").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         } else {
             FlowLayout(spacing: 6) {
                 ForEach(items, id: \.self) { item in

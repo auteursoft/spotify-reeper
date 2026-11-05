@@ -283,7 +283,7 @@ def build_handlers(session):
     def summary_of(model):
         ups, downs, sound = model.summary()
         return {"more_of": [label(n) for n, _ in ups], "less_of": [label(n) for n, _ in downs],
-                "sound_weight": round(sound, 3), "seeds_used": model.n_positives,
+                "sound_share": round(sound, 3), "seeds_used": model.n_positives,
                 "compared_with": model.n_negatives}
 
     def mood_train(job, p):
