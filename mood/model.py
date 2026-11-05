@@ -294,6 +294,17 @@ class MoodModel:
             s = self.clf.predict_proba(self.scaler.transform(self._matrix(profiles)))[:, 1]
         return np.where([has_signal(p) for p in profiles], s, 0.0)
 
+    def decision(self, profiles):
+        """Raw scores (log-odds) for ranking. Unlike score(), they don't bunch up just below 1
+        when there are many seeds, so they keep songs in a clear order. -inf for profiles
+        with no data at all."""
+        if not profiles:
+            return np.array([])
+        profiles = self._clean(profiles)
+        with quiet_math():
+            d = self.clf.decision_function(self.scaler.transform(self._matrix(profiles)))
+        return np.where([has_signal(p) for p in profiles], d, -np.inf)
+
     def contributions(self, profile):
         with quiet_math():
             z = self.scaler.transform(self._matrix(self._clean([profile])))[0]

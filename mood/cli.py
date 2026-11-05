@@ -258,7 +258,7 @@ def cmd_train(ctx):
 
 
 def cmd_build(ctx):
-    from .discover import choose, external_candidates
+    from .discover import choose, external_candidates, scored_pools
     from .library import search_track
 
     a = ctx.args
@@ -269,11 +269,7 @@ def cmd_build(ctx):
     model, seeds, _, lib_profiles, _ = train(ctx, mood_name, mood, lib)
     print_summary(model, mood_name)
 
-    lib_scores = model.score(lib_profiles)
-    library = sorted(({**t, "fit": float(s), "via": "your library", "profile": p}
-                      for t, p, s in zip(lib, lib_profiles, lib_scores)), key=lambda c: -c["fit"])
-
-    external = []
+    cands, profiles = [], []
     if a.horizon > 0:
         tags = model.top_tags(5)
         log(f"Looking beyond your library (Last.fm: similar tracks, similar artists, tags: "
@@ -283,9 +279,7 @@ def cmd_build(ctx):
         cands = external_candidates(ctx.profiler.lastfm, seeds, tags, exclude, limit=a.depth)
         log(f"  {len(cands)} candidates")
         profiles = ctx.profile_all(cands, "new candidates")
-        scores = model.score(profiles)
-        external = sorted(({**c, "fit": float(s), "profile": p}
-                           for c, p, s in zip(cands, profiles, scores)), key=lambda c: -c["fit"])
+    library, external = scored_pools(model, lib, lib_profiles, cands, profiles)
 
     def resolve(c):
         t = search_track(ctx.sp, c["main_artist"], c["title"])
@@ -295,16 +289,19 @@ def cmd_build(ctx):
     if not picks:
         print("\nNo tracks fit well enough. Try a lower --min-fit, or add more seeds.")
         return 1
-    rows = [[i, p["title"], p["artist"], f"{p['fit'] * 100:.0f}",
+    rows = [[i, p["title"], p["artist"], f"{p['fit'] * 100:.1f}",
              "NEW" if p["new"] else "", p["via"], "; ".join(model.explain(p["profile"]))]
             for i, p in enumerate(picks, 1)]
     print()
     table(rows, ["#", "Title", "Artist", "Fit", "", "Found via", "Why"])
+    print("\nFit: how much better the song fits this mood than the rest of your library "
+          "(99.5 = better than 99.5% of it).")
     n_new = sum(p["new"] for p in picks)
     name = a.name or f"{mood_name} · mood mix {datetime.date.today():%Y-%m-%d}"
     print(f'\n{len(picks)} tracks ({n_new} new to you) for "{name}".')
     if len(picks) < a.size:
-        print(f"Only {len(picks)} of {a.size} tracks reached the minimum fit of {a.min_fit:.2f}.")
+        print(f"Only {len(picks)} different songs of {a.size} reached the minimum fit of "
+              f"{a.min_fit * 100:.0f}.")
     if not a.apply:
         print("Dry run: no playlist created. Re-run with --apply to create it.")
         return 0
@@ -362,7 +359,8 @@ def build_parser():
                    help="share of tracks from outside your library, 0..1 (default 0.3)")
     s.add_argument("--max-per-artist", type=int, default=3, help="default 3")
     s.add_argument("--min-fit", type=float, default=0.5,
-                   help="minimum fit score, 0..1 (default 0.5)")
+                   help="leave out songs that fit worse than this share of your library, "
+                        "0..1 (default 0.5: the better-fitting half)")
     s.add_argument("--depth", type=int, default=300,
                    help="how many outside candidates to analyze (default 300)")
     s.add_argument("--name", help="playlist name (default: '<mood> · mood mix <date>')")
