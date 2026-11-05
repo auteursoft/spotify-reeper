@@ -540,3 +540,23 @@ def test_audio_supported_detects_essentia():
     from mood import audio as audio_mod
     import importlib.util
     assert audio_mod.audio_supported() == (importlib.util.find_spec("essentia") is not None)
+
+
+def test_rate_limit_reaches_the_app_as_a_readable_message(harness):
+    import cleaner
+
+    def limited(job):
+        raise cleaner.RateLimited(80040)
+    _, inp, out = harness({"library.analyze": limited})
+    inp.feed({"id": "1", "method": "library.analyze"})
+    reply = out.final("1")
+    assert reply["code"] == "user_error" and "about 22 hours" in reply["message"]
+
+
+def test_engine_spotify_client_does_not_sleep_on_rate_limits(tmp_path):
+    s = Session(server=None)
+    s.configure({"data_dir": str(tmp_path), "client_id": "cid",
+                 "tokens": {"access_token": "a", "refresh_token": "r", "expires_at": 9e9}})
+    retry = s.sp._session.get_adapter("https://api.spotify.com").max_retries
+    assert retry.respect_retry_after_header is False
+    assert 429 not in retry.status_forcelist

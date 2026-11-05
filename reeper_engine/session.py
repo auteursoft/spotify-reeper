@@ -94,9 +94,9 @@ class Session:
         if st.sp is None:
             if self.tokens is None:
                 raise EngineError("auth", "Not signed in to Spotify.")
-            import spotipy
-            st.sp = spotipy.Spotify(auth_manager=self.tokens, retries=3, status_retries=3,
-                                    requests_timeout=20)
+            from cleaner import make_spotify
+            st.sp = make_spotify(auth_manager=self.tokens, retries=3, status_retries=3,
+                                 requests_timeout=20)
         return st.sp
 
     @property
@@ -152,7 +152,8 @@ class Session:
                 job.progress("Reading your library from Spotify…")
             lib = library_tracks(self.sp, self.user_id,
                                  include_liked=self.config.get("include_liked", True),
-                                 log=lambda m: job.progress(m.strip()) if job else None)
+                                 log=lambda m: job.progress(m.strip()) if job else None,
+                                 cache=self.cache)
             with self._lock:
                 self._library = lib
         return lib

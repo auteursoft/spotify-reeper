@@ -124,7 +124,7 @@ def load_seeds(ctx, mood):
     if mood.get("seeds"):
         log(f"Finding {len(mood['seeds'])} seed songs on Spotify...")
     for seed in mood.get("seeds") or []:
-        t = resolve_seed(ctx.sp, seed)
+        t = resolve_seed(ctx.sp, seed, ctx.cache)
         if t is None and isinstance(seed, dict) and seed.get("artist") and seed.get("title"):
             # Not found on Spotify: still usable for learning, via Last.fm and Deezer.
             problems.append(f'not found on Spotify, using name only: {seed["artist"]} - {seed["title"]}')
@@ -137,7 +137,7 @@ def load_seeds(ctx, mood):
     entries = mood.get("seed_playlists") or []
     if entries:
         log(f"Reading {len(entries)} seed playlist(s)...")
-        found, playlist_problems = seed_playlist_tracks(ctx.sp, entries)
+        found, playlist_problems = seed_playlist_tracks(ctx.sp, entries, ctx.cache)
         problems += playlist_problems
         seeds += found
     unique = {}
@@ -168,7 +168,8 @@ def train(ctx, mood_name, mood, library):
 def get_library(ctx):
     from .library import library_tracks
     log("Reading your library from Spotify...")
-    lib = library_tracks(ctx.sp, ctx.user_id, include_liked=not ctx.args.no_liked, log=log)
+    lib = library_tracks(ctx.sp, ctx.user_id, include_liked=not ctx.args.no_liked, log=log,
+                         cache=ctx.cache)
     if ctx.args.limit:
         lib = lib[: ctx.args.limit]
     log(f"  {len(lib)} tracks")
@@ -270,7 +271,7 @@ def plan_build(ctx, mood_name, mood, size=40, horizon=0.3, max_per_artist=3, min
     Each pick has title, artist, uri, fit (0..1: the share of your library it out-fits),
     new (bool), via, and profile. Each song appears once, whatever versions exist."""
     from .discover import choose, external_candidates, scored_pools
-    from .library import search_track
+    from .library import search_track_cached
 
     if not 0 <= horizon <= 1:
         raise SystemExit("--horizon must be between 0 and 1.")
@@ -290,7 +291,7 @@ def plan_build(ctx, mood_name, mood, size=40, horizon=0.3, max_per_artist=3, min
     library, external = scored_pools(model, lib, lib_profiles, cands, profiles)
 
     def resolve(c):
-        t = search_track(ctx.sp, c["main_artist"], c["title"])
+        t = search_track_cached(ctx.sp, c["main_artist"], c["title"], ctx.cache)
         return {k: t[k] for k in ("uri", "artist", "title", "isrc")} if t else None
 
     picks = choose(library, external, size, horizon, max_per_artist, min_fit, resolve)
@@ -400,8 +401,12 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    from cleaner import RateLimited
     try:
         return args.func(Context(args))
+    except RateLimited as err:
+        log(f"\n{err}")
+        return 1
     except KeyboardInterrupt:
         log("\nStopped. Everything analyzed so far is cached; re-run to continue.")
         return 130

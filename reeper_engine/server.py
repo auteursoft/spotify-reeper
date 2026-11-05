@@ -157,6 +157,9 @@ class Server:
 
 def classify(err):
     """Map an unexpected exception to (code, message) the app can act on."""
+    from cleaner import RateLimited
+    if isinstance(err, RateLimited):
+        return "user_error", str(err)
     status = getattr(err, "http_status", None)
     if status == 401:
         return "auth", "Spotify sign-in expired. Please sign in again."
