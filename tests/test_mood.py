@@ -903,3 +903,86 @@ def test_top_tags_come_from_well_supported_seed_tags():
 def test_summary_is_stable_across_runs():
     pos, neg = summary_library()
     assert MoodModel().fit(pos, neg).summary() == MoodModel().fit(pos, neg).summary()
+
+
+# ======================= one version per song =======================
+
+def lib_cand(title, artist, fit, uri):
+    return {"title": title, "artist": artist, "main_artist": artist, "fit": fit,
+            "uri": f"spotify:track:{uri}", "via": "your library"}
+
+
+def test_choose_keeps_one_version_per_song_preferring_the_original():
+    library = [
+        lib_cand("September", "Earth, Wind & Fire", 0.99, "a1"),
+        lib_cand("September", "Earth, Wind & Fire", 0.99, "a2"),           # compilation copy
+        lib_cand("Abracadabra - Remastered 2017", "Steve Miller Band", 0.98, "b1"),
+        lib_cand("Abracadabra", "Steve Miller Band", 0.95, "b2"),
+        lib_cand("I'm Still Standing - Live at Live Aid, Wembley Stadium, 13th July 1985",
+                 "Elton John", 0.97, "c1"),
+        lib_cand("I'm Still Standing", "Elton John", 0.96, "c2"),
+        lib_cand("Come On Eileen - Single Edit", "Dexys Midnight Runners", 0.94, "d1"),
+        lib_cand("Come On Eileen", "Dexys Midnight Runners", 0.94, "d2"),
+    ]
+    picks = discover.choose(library, [], size=10, horizon=0)
+    titles = [p["title"] for p in picks]
+    assert sorted(titles) == sorted(["September", "Abracadabra", "I'm Still Standing", "Come On Eileen"])
+    abra = next(p for p in picks if p["title"] == "Abracadabra")
+    assert abra["fit"] == 0.98 and abra["uri"] == "spotify:track:b2"  # best fit, original version
+
+
+def test_artist_limit_counts_songs_not_copies():
+    library = [lib_cand("Down Under", "Men At Work", 0.99, f"x{i}") for i in range(3)] + [
+        lib_cand("Who Can It Be Now?", "Men At Work", 0.98, "y"),
+        lib_cand("Overkill", "Men At Work", 0.97, "z"),
+        lib_cand("It's a Mistake", "Men At Work", 0.96, "w")]
+    picks = discover.choose(library, [], size=10, horizon=0, max_per_artist=3)
+    assert [p["title"] for p in picks] == ["Down Under", "Who Can It Be Now?", "Overkill"]
+
+
+def test_new_song_that_resolves_to_a_picked_song_is_skipped():
+    library = [lib_cand("Superstition", "Stevie Wonder", 0.9, "s1")]
+    external = [cand("Superstition (Live)", "Stevie Wonder", 0.95), cand("Sir Duke", "Stevie Wonder", 0.94)]
+    resolve = lambda c: {"uri": "spotify:track:" + c["title"].replace(" ", ""),  # noqa: E731
+                         "title": "Superstition - Single Version" if "Superstition" in c["title"] else c["title"]}
+    picks = discover.choose(library, external, size=5, horizon=0.5, resolve=resolve)
+    # New music is taken first; the library's own copy of Superstition is then a duplicate.
+    assert sorted(p["title"] for p in picks) == ["Sir Duke", "Superstition - Single Version"]
+    assert len({discover.song_key(p) for p in picks}) == len(picks)
+
+
+def test_fit_percentiles():
+    lib = np.array([1.0, 2.0, 3.0, 4.0, -np.inf])
+    f = discover.fit_percentiles(np.array([2.5, 4.0, 10.0, -np.inf, 0.0]), lib)
+    assert f[0] == 0.5                 # beats 2 of the 4 scored library songs
+    assert f[1] == 0.875               # ties count half
+    assert f[2] == 1.0 and f[3] == 0.0 and f[4] == 0.0
+
+
+def test_fits_stay_distinct_with_many_seeds():
+    pos, neg = summary_library(n_pos=120, n_neg=600)
+    m = MoodModel().fit(pos, neg)
+    lib, _ = discover.scored_pools(m, neg, neg)
+    top = [round(c["fit"], 3) for c in lib[:30]]
+    probs = np.sort(m.score(neg))[::-1][:30]
+    assert len(set(top)) > 20                    # the ranking is visible
+    assert all(0 <= c["fit"] <= 1 for c in lib)
+    assert len(set(np.round(probs * 100))) < len(set(top))  # what the old 0-100 display showed
+
+
+def test_e2e_build_lists_each_song_once(e2e, capsys):
+    sp, base = e2e
+    # The library holds Superman twice (album and compilation) plus a remaster.
+    sp.library += [sp_track("Superman", "R.E.M.", tid="SupermanCompilationCopy1"),
+                   sp_track("Superman - 2012 Remaster", "R.E.M.", tid="SupermanRemaster2012xx")]
+    TM_VIBE_BACKUP = dict(VIBE)
+    VIBE["Superman - 2012 Remaster"] = "loud"
+    try:
+        assert cli.main(["build", "lets go", "--size", "12", "--horizon", "0"] + base) == 0
+    finally:
+        VIBE.clear()
+        VIBE.update(TM_VIBE_BACKUP)
+    out = capsys.readouterr().out
+    rows = [line for line in out.splitlines() if "R.E.M." in line]
+    assert sum("Superman" in r for r in rows) == 1
+    assert "better than 99.5% of it" in out

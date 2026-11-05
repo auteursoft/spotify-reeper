@@ -62,9 +62,9 @@ struct BuildTab: View {
                         LabeledContent("Songs per artist", value: "at most \(options.wrappedValue.maxPerArtist)")
                     }
                     VStack(alignment: .leading, spacing: 2) {
-                        LabeledContent("Minimum fit", value: "\(Int(options.wrappedValue.minFit * 100))")
+                        LabeledContent("Minimum fit", value: "better than \(Int((options.wrappedValue.minFit * 100).rounded()))%")
                         Slider(value: options.minFit, in: 0...0.95, step: 0.05).labelsHidden()
-                        Text("Leaves out songs that fit the mood less than this.").font(.caption).foregroundStyle(.secondary)
+                        Text("Leaves out songs that fit the mood worse than this share of your library.").font(.caption).foregroundStyle(.secondary)
                     }
                     Stepper(value: options.depth, in: 50...1000, step: 50) {
                         LabeledContent("Discovery depth", value: "\(options.wrappedValue.depth) songs")
@@ -130,10 +130,11 @@ struct BuildTab: View {
                     TableColumn("Fit") { p in
                         HStack(spacing: 6) {
                             ProgressView(value: p.fit).frame(width: 50)
-                            Text("\(Int((p.fit * 100).rounded()))").monospacedDigit().foregroundStyle(.secondary)
+                            Text(String(format: "%.1f", p.fit * 100)).monospacedDigit().foregroundStyle(.secondary)
                         }
+                        .help("Fits this mood better than \(String(format: "%.1f", p.fit * 100))% of your library")
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("Fit \(Int((p.fit * 100).rounded())) out of 100")
+                        .accessibilityLabel("Fits better than \(String(format: "%.1f", p.fit * 100)) percent of your library")
                     }
                     .width(90)
                     TableColumn("Why") { p in

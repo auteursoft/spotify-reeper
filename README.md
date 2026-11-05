@@ -136,7 +136,7 @@ python moods.py build "lets fucking go" --size 30 --horizon 0.5 --apply   # crea
 
 - **analyze** reads your playlists (the ones you own or collaborate on) and Liked Songs, then fetches tags and analyzes previews for every track. The first run takes roughly a second per track, so allow an hour for a few thousand tracks. Everything is cached in `reeper-cache.db` (git-ignored); you can stop it with Ctrl-C and re-run to continue. `build` and `train` analyze anything missing themselves, but running `analyze` first is easier to watch.
 - **train** shows the features that most raise and lower a track's score, then checks the model. It leaves each seed out in turn, retrains, and reports where that seed ranks in your library. Seeds that rank high mean the model learned the mood rather than memorizing your list.
-- **build** prints the playlist with each track's fit (0 to 100), whether it's new to you, how it was found, and why it fits. Nothing is created without `--apply`; with `--apply`, it creates a private playlist named "<mood> · mood mix <date>" (or `--name`).
+- **build** prints the playlist with each song's fit, whether it's new to you, how it was found, and why it fits. Fit is how much better a song fits the mood than the rest of your library: 99.5 means better than 99.5% of it. Each song appears once, even if your library has several versions of it (album and compilation copies, remasters, live recordings); the original is preferred. Nothing is created without `--apply`; with `--apply`, it creates a private playlist named "<mood> · mood mix <date>" (or `--name`).
 
 `build` options:
 
@@ -145,7 +145,7 @@ python moods.py build "lets fucking go" --size 30 --horizon 0.5 --apply   # crea
 | `--size N` | number of tracks (default 40) |
 | `--horizon X` | share from outside your library, 0 to 1 (default 0.3). 0 = only your library, 1 = only new music |
 | `--max-per-artist N` | default 3 |
-| `--min-fit X` | leave out tracks that fit less than this, 0 to 1 (default 0.5) |
+| `--min-fit X` | leave out songs that fit the mood worse than this share of your library, 0 to 1 (default 0.5: the better-fitting half) |
 | `--depth N` | how many outside candidates to analyze (default 300; more = wider search, slower first run) |
 
 Options for every command: `--no-audio` (Last.fm tags only; no models needed), `--no-liked` (leave Liked Songs out), `--limit N` (only the first N library tracks, for a quick trial), `--moods`, `--config`, `--models`, `--cache` (file locations).
