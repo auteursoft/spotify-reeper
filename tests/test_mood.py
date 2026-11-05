@@ -11,7 +11,7 @@ from mood import audio, cli, discover, library  # noqa: E402
 from mood.cache import Cache, cached  # noqa: E402
 from mood.deezer import Deezer  # noqa: E402
 from mood.lastfm import LastFM, normalize_tags  # noqa: E402
-from mood.model import MoodModel, NotEnoughData, held_out_check  # noqa: E402
+from mood.model import MoodModel, NotEnoughData, held_out_check, label  # noqa: E402
 from mood.net import Http, HttpError  # noqa: E402
 from mood.profile import Profiler  # noqa: E402
 from mood.text import clean_title, fold, same_song, track_key  # noqa: E402
@@ -646,7 +646,7 @@ def test_e2e_train_reports_learning_and_check(e2e, capsys):
     _, base = e2e
     assert cli.main(["train", "LETS GO"] + base) == 0
     out = capsys.readouterr().out
-    assert "learned from 6 seed songs" in out and "Median: top" in out
+    assert "6 seed songs compared with" in out and "Median: top" in out
 
 
 def test_e2e_seeds_table(e2e, capsys):
@@ -811,3 +811,95 @@ def test_held_out_check_uses_folds_for_many_seeds(monkeypatch):
     fits.clear()
     held_out_check(pos[:8], neg)
     assert len(fits) == 8                                  # few seeds: leave one out
+
+
+# ======================= readable summaries =======================
+
+def summary_library(n_pos=30, n_neg=400, seed=7):
+    """Seeds are energetic punk; the library is mixed. "punk" and "punk rock" overlap heavily,
+    "theme:corporate" happens to track the seeds, one seed has a one-off tag, and "love"
+    songs are common in the library but not among the seeds."""
+    rng = np.random.default_rng(seed)
+
+    def prof(i, is_seed):
+        punk = rng.random() < (0.8 if is_seed else 0.1)
+        tags = {}
+        if punk:
+            tags["punk"] = 1.0
+            if rng.random() < 0.85:
+                tags["punk rock"] = round(float(rng.uniform(0.6, 1.0)), 3)
+        if rng.random() < (0.05 if is_seed else 0.3):
+            tags["love songs"] = 0.8
+        if rng.random() < 0.5:
+            tags["rock"] = 0.5
+        if is_seed and i == 0:
+            tags["one-off oddity"] = 1.0
+        e = (0.75 if is_seed else 0.35) + rng.normal(0, 0.12)
+        moods = {"theme:energetic": float(np.clip(e, 0, 1)),
+                 "theme:corporate": float(np.clip(e + rng.normal(0, 0.05), 0, 1)),
+                 "theme:love": float(np.clip((0.15 if is_seed else 0.45) + rng.normal(0, 0.1), 0, 1)),
+                 "audio:aggressive": float(np.clip(e + rng.normal(0, 0.2), 0, 1))}
+        emb = (np.ones(32) * e + rng.normal(0, 0.3, 32)).tolist()
+        return {"key": f"s{i}" if is_seed else f"n{i}", "artist": "a", "title": str(i),
+                "tags": tags, "audio": {"moods": moods, "embedding": emb}}
+    return [prof(i, True) for i in range(n_pos)], [prof(i, False) for i in range(n_neg)]
+
+
+def mean_of(profiles, feature):
+    kind, _, name = feature.partition(":")
+    if kind == "tag":
+        return np.mean([p["tags"].get(name, 0.0) for p in profiles])
+    return np.mean([p["audio"]["moods"][feature] for p in profiles])
+
+
+def test_summary_sides_agree_with_the_data():
+    pos, neg = summary_library()
+    m = MoodModel().fit(pos, neg)
+    ups, downs, sound = m.summary()
+    assert ups and downs
+    for name, effect in ups:
+        assert effect > 0 and mean_of(pos, name) > mean_of(neg, name), name
+    for name, effect in downs:
+        assert effect < 0 and mean_of(pos, name) < mean_of(neg, name), name
+    down_names = [n for n, _ in downs]
+    assert "tag:punk" not in down_names and "tag:punk rock" not in down_names
+    assert {"tag:punk", "tag:punk rock"} & {n for n, _ in ups}
+    assert 0 <= sound <= 1
+
+
+def test_summary_leaves_out_use_case_labels_and_rare_tags():
+    pos, neg = summary_library()
+    m = MoodModel().fit(pos, neg)
+    named = [n for n, _ in m.effects]
+    assert "theme:corporate" not in named          # a use, not a feeling
+    assert "tag:one-off oddity" not in named       # only one seed has it
+    assert "theme:energetic" in named or "audio:aggressive" in named
+    for p in pos[:10]:
+        why = m.explain(p)
+        assert all("corporate" not in w and "oddity" not in w for w in why)
+        allowed = {label(n) for n, e in m.effects if e > 0} | {"overall sound"}
+        assert set(why) <= allowed
+
+
+def test_summary_wording():
+    assert label("theme:love") == "sounds like a love song"
+    assert label("audio:party") == "sounds like party music"
+    assert label("theme:energetic") == "sounds energetic"
+    assert label("tag:punk rock") == "tagged punk rock"
+    pos, neg = summary_library()
+    m = MoodModel().fit(pos, neg)
+    labels = [label(n) for n, _ in m.effects]
+    assert len(labels) == len(set(labels))         # no label twice
+    assert "tag:love songs" in [n for n, e in m.effects if e < 0] or \
+        "theme:love" in [n for n, e in m.effects if e < 0]
+
+
+def test_top_tags_come_from_well_supported_seed_tags():
+    pos, neg = summary_library()
+    tags = MoodModel().fit(pos, neg).top_tags()
+    assert tags and "one-off oddity" not in tags and ("punk" in tags or "punk rock" in tags)
+
+
+def test_summary_is_stable_across_runs():
+    pos, neg = summary_library()
+    assert MoodModel().fit(pos, neg).summary() == MoodModel().fit(pos, neg).summary()

@@ -227,12 +227,13 @@ def cmd_analyze(ctx):
 def print_summary(model, mood_name):
     ups, downs, sound = model.summary()
     from .model import label
-    print(f'What "{mood_name}" means, learned from {model.n_positives} seed songs '
-          f"vs {model.n_negatives} other tracks in your library:\n")
-    print("  More of:  " + ", ".join(label(n) for n, _ in ups))
-    print("  Less of:  " + ", ".join(label(n) for n, _ in downs))
-    if sound:
-        print(f"  Overall sound (beyond the named moods) also counts, weight {sound:.2f}.")
+    print(f'What sets "{mood_name}" apart: {model.n_positives} seed songs compared with '
+          f"{model.n_negatives} other tracks in your library.\n")
+    print("  More of:  " + (", ".join(label(n) for n, _ in ups) or "nothing clear-cut"))
+    print("  Less of:  " + (", ".join(label(n) for n, _ in downs) or "nothing clear-cut"))
+    if sound >= 0.05:
+        print(f"  Beyond these, the overall sound carries about {round(sound * 100)}% of the "
+              "model's weight.")
 
 
 def check_verdict(median):

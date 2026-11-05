@@ -20,6 +20,24 @@ MAX_SOUND_COMPONENTS = 12
 MIN_POSITIVES = 5
 MIN_NEGATIVES = 20
 
+# The audio model's 56 MTG-Jamendo "mood/theme" labels come from a production-music library,
+# and some name a use rather than a feeling. They still help the model; they just don't
+# describe a mood, so the summary and the per-song "why" leave them out.
+USE_CASE_THEMES = {
+    "advertising", "background", "children", "christmas", "commercial", "corporate",
+    "documentary", "drama", "film", "game", "holiday", "movie", "nature", "soundscape",
+    "space", "sport", "summer", "trailer", "travel",
+}
+# Labels that need rewording to follow "sounds".
+SOUND_WORDING = {
+    "love": "like a love song", "ballad": "like a ballad", "party": "like party music",
+    "dream": "dreamy", "action": "action-packed", "adventure": "adventurous",
+}
+MIN_EFFECT = 0.2          # smallest difference (in standard deviations) worth describing
+MIN_SEED_SHARE = 0.10     # a tag must be on at least this share of seeds (and 3) to count
+MIN_LIBRARY_SHARE = 0.02  # "less of" tags must be on at least this share of the library
+REDUNDANT = 0.8           # correlation above which two features of a kind say the same thing
+
 
 class NotEnoughData(Exception):
     pass
@@ -198,7 +216,72 @@ class MoodModel:
             self.clf = LogisticRegression(C=self.C, class_weight="balanced", max_iter=5000)
             self.clf.fit(self.scaler.transform(X), y)
         self.n_positives, self.n_negatives = len(positives), len(negatives)
+        self._describe(raw, len(positives))
         return self
+
+    def _describe(self, raw, n_pos):
+        """Work out what sets the seeds apart, for people to read.
+
+        The model's own weights are hard to read: when features overlap (\"punk\" and
+        \"punk rock\" mostly mark the same songs) it may lean on one and offset with the
+        other, so they'd show up on opposite sides. Instead, each feature is compared on
+        its own: how far the seeds' average is from the library's, in standard deviations.
+        A feature is kept only if the model weights it the same way, enough seeds have it
+        (for tags), and it isn't a near-duplicate of a stronger one already kept."""
+        pos, neg = raw[:n_pos], raw[n_pos:]
+        with quiet_math(), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            pooled = np.sqrt((np.nanvar(pos, axis=0) + np.nanvar(neg, axis=0)) / 2)
+            diff = np.nanmean(pos, axis=0) - np.nanmean(neg, axis=0)
+            effect = np.nan_to_num(np.where(pooled > 1e-9, diff / pooled, 0.0))
+        seed_share = (np.nan_to_num(pos) > 0).mean(axis=0)
+        library_share = (np.nan_to_num(neg) > 0).mean(axis=0)
+        coef = self.clf.coef_[0]
+        min_seeds = max(3 / n_pos, MIN_SEED_SHARE)
+
+        candidates = []
+        for j, name in enumerate(self.feature_names):
+            if not describable(name) or abs(effect[j]) < MIN_EFFECT:
+                continue
+            if coef[j] == 0 or np.sign(coef[j]) != np.sign(effect[j]):
+                continue  # the model doesn't use it that way; don't claim it does
+            if name.startswith("tag:"):
+                if effect[j] > 0 and seed_share[j] < min_seeds:
+                    continue
+                if effect[j] < 0 and (library_share[j] < MIN_LIBRARY_SHARE
+                                      or seed_share[j] >= library_share[j]):
+                    continue
+            candidates.append(j)
+        candidates.sort(key=lambda j: (-round(abs(effect[j]), 6), self.feature_names[j]))
+        candidates = candidates[:60]
+
+        # Drop near-synonyms: of two features of the same kind (two tags, or two sound
+        # qualities) on the same side that move together, keep the stronger. Different kinds
+        # are different evidence ("sounds aggressive" vs "tagged punk"), and opposite sides
+        # ("more aggressive", "less romantic") both describe the mood, so those all stay.
+        if candidates:
+            cols = raw[:, candidates].copy()
+            with quiet_math(), warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                means = np.nanmean(cols, axis=0)
+                cols = np.where(np.isnan(cols), np.nan_to_num(means), cols)
+                corr = np.nan_to_num(np.corrcoef(cols, rowvar=False)) if len(candidates) > 1 \
+                    else np.ones((1, 1))
+        kept, labels = [], set()
+        for a, j in enumerate(candidates):
+            text = label(self.feature_names[j])
+            kind = self.feature_names[j].startswith("tag:")
+            same_side = [b for b, k in kept if np.sign(effect[k]) == np.sign(effect[j])
+                         and self.feature_names[k].startswith("tag:") == kind]
+            if text in labels or any(abs(corr[a, b]) > REDUNDANT for b in same_side):
+                continue
+            kept.append((a, j))
+            labels.add(text)
+        self.effects = [(self.feature_names[j], float(effect[j])) for _, j in kept]
+
+        total = float(np.abs(coef).sum())
+        sound = float(np.abs([c for n, c in zip(self.feature_names, coef) if n.startswith("sound:")]).sum())
+        self.sound_share = sound / total if total else 0.0
 
     # ---------------- using it ----------------
 
@@ -217,37 +300,48 @@ class MoodModel:
         return dict(zip(self.feature_names, z * self.clf.coef_[0]))
 
     def explain(self, profile, k=3):
-        """The k features that pushed this track's score up the most, in plain words."""
+        """The k reasons this track fits, in the same words as the summary's "More of"
+        (plus "overall sound" when the sound fingerprint is what carries it)."""
         contrib = self.contributions(profile)
+        vocabulary = {n for n, e in self.effects if e > 0}
+        items = [(n, v) for n, v in contrib.items() if n in vocabulary and v > 0]
         sound = sum(v for n, v in contrib.items() if n.startswith("sound:"))
-        items = [(n, v) for n, v in contrib.items() if not n.startswith("sound:")]
-        if sound:
+        if sound > 0:
             items.append(("overall sound", sound))
-        items = [(n, v) for n, v in items if v > 0]
         items.sort(key=lambda nv: -nv[1])
         return [label(n) for n, _ in items[:k]]
 
-    def summary(self, k=10):
-        """What the model learned: the features that most raise and lower the score."""
-        coefs = [(n, c) for n, c in zip(self.feature_names, self.clf.coef_[0])
-                 if not n.startswith("sound:")]
-        ups = sorted([nc for nc in coefs if nc[1] > 0], key=lambda nc: -nc[1])[:k]
-        downs = sorted([nc for nc in coefs if nc[1] < 0], key=lambda nc: nc[1])[:k]
-        sound = float(np.abs([c for n, c in zip(self.feature_names, self.clf.coef_[0])
-                              if n.startswith("sound:")]).sum())
-        return ups, downs, sound
+    def summary(self, k=8):
+        """What sets the mood apart: (more_of, less_of, sound_share).
+
+        more_of / less_of: up to k (feature, effect) pairs, strongest first, where effect is
+        how many standard deviations the seeds' average sits above or below the library's.
+        sound_share: the share (0..1) of the model's weight on the overall sound fingerprint,
+        beyond the named qualities."""
+        ups = [(n, e) for n, e in self.effects if e > 0][:k]
+        downs = [(n, e) for n, e in self.effects if e < 0][:k]
+        return ups, downs, self.sound_share
 
     def top_tags(self, k=5):
-        """The Last.fm tags most associated with the mood, to search for new music."""
-        ups, _, _ = self.summary(k=100)
-        return [n[4:] for n, _ in ups if n.startswith("tag:")][:k]
+        """The Last.fm tags most over-represented in the seeds, to search for new music."""
+        return [n[4:] for n, e in self.effects if e > 0 and n.startswith("tag:")][:k]
+
+
+def describable(feature):
+    """Whether a feature belongs in a description of a mood (see USE_CASE_THEMES)."""
+    kind, _, name = feature.partition(":")
+    if kind == "sound":
+        return False
+    return not (kind == "theme" and name in USE_CASE_THEMES)
 
 
 def label(feature):
-    """'theme:romantic' -> 'sounds romantic', 'tag:power pop' -> 'tagged power pop'."""
+    """'theme:romantic' -> 'sounds romantic', 'theme:love' -> 'sounds like a love song',
+    'tag:power pop' -> 'tagged power pop'."""
     kind, _, name = feature.partition(":")
     if kind in ("audio", "theme"):
-        return f"sounds {name.replace('_', ' ')}"
+        name = name.replace("_", " ")
+        return f"sounds {SOUND_WORDING.get(name, name)}"
     if kind == "tag":
         return f"tagged {name}"
     return feature
