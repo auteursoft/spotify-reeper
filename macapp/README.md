@@ -70,6 +70,8 @@ The setup guide walks through it:
 
 Each person uses their own Spotify app because Spotify only lets an individual's app serve its owner and a few people added under **User Management**.
 
+Reeper treats your playlists as your content: the mood model learns from your own choices of songs, describes them with Last.fm tags rather than Spotify data, and is trained on your Mac for you alone (see [APP_STORE.md](APP_STORE.md)).
+
 Data stays on the Mac: tokens and the Last.fm key in the Keychain; moods, the analysis cache and downloaded models in `~/Library/Containers/com.auteursoft.reeper/Data/Library/Application Support/Reeper/` (unsandboxed Debug builds use `~/Library/Application Support/Reeper/`). **Settings → Analysis → Show in Finder** opens it. To bring in moods from the command-line tool, use **File → Import Moods…** with your `moods.json`.
 
 ## Using the app

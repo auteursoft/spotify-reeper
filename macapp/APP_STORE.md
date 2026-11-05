@@ -11,16 +11,23 @@ The App Store edition (`build_python.sh appstore`) judges songs by Last.fm tags 
 
 `package_appstore.sh` refuses to package an app that contains the audio edition.
 
-## Risks to understand first
+## Reeper's position: your playlists are your content
+
+Reeper is built on the premise that **a person's own playlists are their content, not Spotify's.** A playlist records choices the person made: which songs belong together, under what name, in what order. Spotify stores and serves it, but the curation is the person's. So learning a mood from your own playlists is learning from your own work, and Spotify's Developer Policy rule against training models on *Spotify* content doesn't apply to it.
+
+The app is designed to be consistent with that position:
+
+- **Your choices are the training signal.** The mood model learns which songs you put together. It learns nothing about how Spotify ranks, recommends or describes music.
+- **The features aren't Spotify's.** Songs are described by public Last.fm tags (and, in the direct-download edition, by on-device analysis of Deezer previews). Reeper never uses Spotify audio, Spotify audio features, or Spotify's catalog metadata as model input.
+- **It's personal and local.** Each model is trained on the person's own Mac, from their own library, for their use only. Nothing is uploaded, pooled across people, or used to build any shared model or dataset.
+
+State this the same way wherever it comes up: in the review notes below, and if Spotify ever asks. Practically, each person signs in with their own Spotify Client ID, so a decision Spotify makes about one app affects only that person.
+
+## Other things to understand first
 
 1. **Spotify access for other people.** A Spotify app in Development mode serves only its owner and up to a few people added under User Management; Spotify grants wider ("extended") access only to established organizations' products. Reeper therefore asks each person to create their own free Spotify developer app and paste its Client ID, which the setup guide walks through. This is unusual, and App Review may question it (see the notes below). People also need Spotify Premium to own a developer app.
-2. **Spotify's Developer Policy** bars using Spotify content to train machine-learning models. Reeper's position, stated in the review notes below and designed into the app:
-   - a person's playlists are **their own curation**: which songs they chose to group together. The mood model learns from those choices.
-   - the model's features come from **Last.fm tags**, not from Spotify audio, Spotify audio features, or Spotify's catalog metadata.
-   - each model is trained **on the person's own Mac, for that person only**. Nothing is uploaded, pooled across users, or used to train any shared model.
-   - Spotify still decides how its policy applies and can revoke a Client ID. Because each person uses their own Client ID, any revocation affects only that person.
-3. **Spotify branding.** Don't use "Spotify" in the app's name, subtitle or icon. Saying the app works *with* Spotify in the description is normal; the app states it isn't affiliated.
-4. **Last.fm API terms** allow non-commercial use. Keep the app free.
+2. **Spotify branding.** Don't use "Spotify" in the app's name, subtitle or icon. Saying the app works *with* Spotify in the description is normal; the app states it isn't affiliated.
+3. **Last.fm API terms** allow non-commercial use. Keep the app free.
 
 ## Checklist
 
@@ -52,7 +59,7 @@ The App Store edition (`build_python.sh appstore`) judges songs by Last.fm tags 
 >
 > **To review without creating accounts:** we've added your review account to our Spotify app. In Settings → Accounts, enter Client ID `<your Client ID>`, choose Sign In with Spotify, and sign in with Spotify account `<review account email>` / `<password>`. Then enter Last.fm API key `<a key you created for review>`. The account has sample playlists and two moods ready.
 >
-> **About the mood feature:** the model learns from the songs the user picked as examples (their own curation) using public Last.fm tags, runs entirely on the Mac, and is used only for that user. Reeper doesn't use Spotify audio or audio features, and uploads nothing.
+> **About the mood feature:** a user's playlists are their own content: their choices of which songs belong together. Reeper learns a mood from those choices, describing songs with public Last.fm tags, entirely on the user's Mac and for that user only. It doesn't use Spotify audio, audio features or catalog metadata as model input, and it uploads nothing.
 >
 > **The bundled Python runtime** runs only Reeper's own bundled code, inside the app's sandbox (it inherits the sandbox); it doesn't download or execute other code.
 
