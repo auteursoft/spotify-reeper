@@ -17,6 +17,7 @@ import fnmatch
 import json
 import re
 import sys
+import time
 
 try:
     from tabulate import tabulate
@@ -503,8 +504,85 @@ def load_config(path):
         raise SystemExit(f"Error loading {path}: {err}")
 
 
-def make_client(config):
+# --------------------------------------------------------------------------
+# Rate limits
+# --------------------------------------------------------------------------
+
+MAX_RATE_LIMIT_WAIT = 30  # seconds; longer pauses stop with a message instead of waiting
+
+
+class RateLimited(Exception):
+    """Spotify asked this app to pause for longer than it's sensible to wait."""
+    http_status = 429
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+        import datetime
+        until = datetime.datetime.now() + datetime.timedelta(seconds=seconds)
+        if seconds >= 3600:
+            span = f"about {seconds / 3600:.0f} hour{'s' if seconds >= 5400 else ''}"
+        else:
+            span = f"about {max(1, round(seconds / 60))} minute{'s' if seconds >= 90 else ''}"
+        super().__init__(
+            f"Spotify has paused requests from your Spotify app for {span} because it made too "
+            f"many requests (rate limit). Try again after {until:%a %H:%M}. Everything read so "
+            "far is saved, so the next run picks up where this one stopped.")
+
+
+def retry_after(err):
+    """Seconds Spotify asked us to wait, from a 429 error's Retry-After header."""
+    headers = getattr(err, "headers", None) or {}
+    try:
+        return int(float(headers.get("Retry-After") or headers.get("retry-after")))
+    except (TypeError, ValueError):
+        return None
+
+
+def make_spotify(sleep=time.sleep, **kwargs):
+    """A spotipy client that waits out short rate limits and stops on long ones.
+
+    spotipy's default retries honor any Retry-After, so a day-long rate limit would make the
+    program sit silently for a day. Here 429s are handled ourselves: a pause of up to
+    MAX_RATE_LIMIT_WAIT seconds is waited out (a few times), a longer one raises RateLimited.
+    """
+    import requests
     import spotipy
+    from urllib3.util.retry import Retry
+
+    class Spotify(spotipy.Spotify):
+        def _build_session(self):
+            # urllib3 retries any 429 that carries Retry-After, sleeping for as long as it
+            # says (even 22 hours), whatever status_forcelist says. Turn that off; 429s are
+            # handled in _internal_call below.
+            self._session = requests.Session()
+            retry = Retry(total=self.retries, connect=None, read=False,
+                          allowed_methods=frozenset(["GET", "POST", "PUT", "DELETE"]),
+                          status=self.status_retries, backoff_factor=self.backoff_factor,
+                          status_forcelist=self.status_forcelist,
+                          respect_retry_after_header=False)
+            adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+            self._session.mount("http://", adapter)
+            self._session.mount("https://", adapter)
+
+        def _internal_call(self, method, url, payload, params):
+            for attempt in range(4):
+                try:
+                    return super()._internal_call(method, url, payload, params)
+                except spotipy.SpotifyException as err:
+                    if err.http_status != 429:
+                        raise
+                    wait = retry_after(err)
+                    if wait is None:
+                        wait = 2 ** attempt  # server errors that ran out of retries
+                    if wait > MAX_RATE_LIMIT_WAIT or attempt == 3:
+                        raise RateLimited(wait) from err
+                    sleep(max(1, wait))
+
+    kwargs.setdefault("status_forcelist", (500, 502, 503, 504))  # not 429: handled above
+    return Spotify(**kwargs)
+
+
+def make_client(config):
     from spotipy.oauth2 import SpotifyOAuth
 
     redirect_uri = config.get("redirect_uri", DEFAULT_REDIRECT_URI)
@@ -517,7 +595,7 @@ def make_client(config):
     )
     if not auth.validate_token(auth.cache_handler.get_cached_token()):
         print(login_hint(redirect_uri), file=sys.stderr)
-    return spotipy.Spotify(auth_manager=auth)
+    return make_spotify(auth_manager=auth)
 
 
 def login_hint(redirect_uri):
@@ -535,8 +613,12 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     validate_patterns(args)
     sp = make_client(load_config(args.config))
-    user_id = sp.current_user()["id"]
-    return args.func(sp, args, user_id)
+    try:
+        user_id = sp.current_user()["id"]
+        return args.func(sp, args, user_id)
+    except RateLimited as err:
+        print(f"\n{err}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
