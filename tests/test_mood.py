@@ -766,3 +766,48 @@ def test_seeds_command_reports_progress(e2e, capsys):
     cli.main(["seeds", "lets go"] + base)
     err = capsys.readouterr().err
     assert "Analyzing 6 seed songs" in err and "[1/6]" in err and "[6/6]" in err
+
+
+# ======================= robustness at library scale =======================
+
+def test_damaged_audio_is_treated_as_missing_without_warnings():
+    import warnings
+    pos, neg = library_split()
+    neg[0]["audio"]["embedding"][3] = float("nan")          # damaged cache entry
+    neg[1]["audio"]["embedding"] = neg[1]["audio"]["embedding"][:10]  # different model's output
+    neg[2]["audio"]["moods"]["audio:aggressive"] = float("inf")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                       # any warning fails the test
+        m = MoodModel().fit(pos, neg)
+        scores = m.score(neg + [synth_profile(950, True)])
+    assert np.isfinite(scores).all()
+    assert m.unusable_audio >= 2
+    assert m.score([synth_profile(951, True)])[0] > m.score([synth_profile(952, False)])[0]
+
+
+def test_real_overflow_is_caught_and_reported_once():
+    pos, neg = library_split()
+    m = MoodModel().fit(pos, neg)
+    huge = synth_profile(960, True)
+    huge["audio"]["embedding"] = [1.7e308 if i % 2 else -1.7e308 for i in range(32)]
+    with pytest.warns(RuntimeWarning, match="not finite") as caught:
+        s = m.score([huge, huge])
+    assert np.isfinite(s).all()
+    assert len([w for w in caught if "not finite" in str(w.message)]) == 1
+
+
+def test_held_out_check_uses_folds_for_many_seeds(monkeypatch):
+    pos = [synth_profile(i, True) for i in range(30)]
+    neg = [synth_profile(300 + i, False) for i in range(60)] + [synth_profile(400 + i, True) for i in range(5)]
+    fits = []
+    real_fit = MoodModel.fit
+    monkeypatch.setattr(MoodModel, "fit", lambda self, p, n: fits.append(len(p)) or real_fit(self, p, n))
+    results = held_out_check(pos, neg)
+    assert len(fits) == 5 and all(n == 24 for n in fits)     # 5 rounds, 6 seeds held out each
+    assert [r[0]["key"] for r in results] == [p["key"] for p in pos]  # every seed, once, in order
+    assert np.median([pct for _, pct in results]) >= 80
+    assert held_out_check(pos, neg) == results             # same split every run
+
+    fits.clear()
+    held_out_check(pos[:8], neg)
+    assert len(fits) == 8                                  # few seeds: leave one out
