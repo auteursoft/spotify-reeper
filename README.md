@@ -156,6 +156,10 @@ Notes:
 - The Essentia models are licensed CC BY-NC-SA 4.0: fine for personal use, not for commercial use.
 - Spotify stopped offering its own audio features and previews to new apps in 2024, which is why this uses Deezer previews and Essentia instead.
 
+## Mac app
+
+`macapp/` contains **Reeper for Mac**, a native SwiftUI app with the same features: playlist cleanup with live filters and previews, and mood playlists with seeds, insights and a build preview. The engine above is bundled inside it. See [macapp/README.md](macapp/README.md) to build and run it, and [macapp/APP_STORE.md](macapp/APP_STORE.md) for Mac App Store submission.
+
 ## Running the tests
 
 ```

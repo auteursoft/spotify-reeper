@@ -1,5 +1,5 @@
 // Integration test for the Swift engine client against the real Python engine protocol.
-// Builds on Linux or macOS with just Foundation; see macapp/Tests/run_engine_smoke.sh.
+// Builds on Linux or macOS with just Foundation; see macapp/Tests/run_core_tests.sh.
 //
 //   EngineSmoke <python> <repo root>
 //

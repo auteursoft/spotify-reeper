@@ -186,3 +186,9 @@ cython_debug/
 # Mood playlists: audio models and analysis cache
 models/
 reeper-cache.db
+
+# Mac app: generated Xcode project and build outputs
+macapp/Reeper.xcodeproj/
+macapp/build/
+xcuserdata/
+*.xcarchive

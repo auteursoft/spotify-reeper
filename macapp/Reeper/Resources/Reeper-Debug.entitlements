@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Debug builds are not sandboxed, so they can run a development Python and source
+	     checkout (REEPER_PYTHON / REEPER_SOURCE). Release builds use Reeper.entitlements. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>
