@@ -2,7 +2,7 @@
     "lets fucking go": {
         "seeds": [
             {"artist": "The Replacements", "title": "Alex Chilton - 2008 Remaster"},
-            {"artist": "R.E.M.", "title": "Staring Down The Barrel Of The Middle Distance - Live At The Olympia Theatre, Dublin, Ireland / 2007"},
+            {"artist": "R.E.M.", "title": "Departure"},
             {"artist": "R.E.M.", "title": "Begin The Begin"},
             {"artist": "R.E.M.", "title": "Superman"},
             {"artist": "R.E.M.", "title": "Pop Song 89 - Remastered 2013"},
@@ -11,7 +11,7 @@
             {"artist": "The Knack", "title": "My Sharona"},
             {"artist": "The English Beat", "title": "Save It for Later - 2012 Remaster"}
         ],
-        "seed_playlists": ["https://open.spotify.com/playlist/4KIAT34SSNCFOFnA7yFlhI"]
+        "seed_playlists": ["https://open.spotify.com/playlist/5BVMkZmPaM0oGirUalYRh8?si=38ca253fe4af40bf"]
     },
     "romantic": {
         "seeds": [],

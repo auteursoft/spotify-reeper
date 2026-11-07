@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -739,7 +740,7 @@ def test_seed_playlist_name_lookup_failure_still_reads_tracks():
 def test_shipped_lfg_mood_uses_the_playlist():
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "moods.json")
     entries = json.load(open(path))["lets fucking go"]["seed_playlists"]
-    assert any(LFG_ID in e for e in entries)
+    assert entries and all(library._PLAYLIST_ID.search(e) for e in entries)
 
 
 # ======================= output =======================
@@ -986,3 +987,74 @@ def test_e2e_build_lists_each_song_once(e2e, capsys):
     rows = [line for line in out.splitlines() if "R.E.M." in line]
     assert sum("Superman" in r for r in rows) == 1
     assert "better than 99.5% of it" in out
+
+
+# ======================= confirmations and saved previews =======================
+
+def test_confirm_asks_again_instead_of_aborting_on_stray_keys():
+    import cleaner
+    answers = iter(["", "j", "   ", "YES"])
+    flushed = []
+    assert cleaner.confirm("Create?", False, ask=lambda _: next(answers),
+                           flush=lambda: flushed.append(1)) is True
+    assert flushed == [1]
+    assert cleaner.confirm("Create?", False, ask=lambda _: "no", flush=lambda: None) is False
+    assert cleaner.confirm("Create?", False, ask=lambda _: "x", flush=lambda: None) is False  # gives up eventually
+
+    def eof(_):
+        raise EOFError
+    assert cleaner.confirm("Create?", False, ask=eof, flush=lambda: None) is False
+    assert cleaner.confirm("Create?", True, ask=eof) is True
+
+
+def test_keys_typed_during_a_run_are_discarded_before_asking():
+    import cleaner
+    pytest.importorskip("termios")  # POSIX terminals only
+    import pty
+    master, slave = pty.openpty()
+    try:
+        tty_in = os.fdopen(slave, "r", closefd=False)
+        os.write(master, b"jk\n")                  # stray keys while the job ran
+        time.sleep(0.1)
+        cleaner.discard_typeahead(tty_in)
+        os.write(master, b"yes\n")                 # the real answer
+        time.sleep(0.1)
+        assert tty_in.readline().strip() == "yes"
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def test_build_saves_preview_and_create_makes_exactly_that_playlist(e2e, capsys, monkeypatch):
+    sp, base = e2e
+    assert cli.main(["build", "lets go", "--size", "8", "--horizon", "0.25"] + base) == 0
+    out = capsys.readouterr().out
+    assert 'python moods.py create "Lets go"' in out and sp.created == []
+
+    # Creating must not rebuild: no analysis, no searching.
+    def no_rebuild(*a, **k):
+        raise AssertionError("create must not rebuild")
+    monkeypatch.setattr(cli, "train", no_rebuild)
+    monkeypatch.setattr(cli.Context, "profile_all", no_rebuild)
+    searches = len(sp.queries)
+    assert cli.main(["create", "LETS GO", "--yes"] + base) == 0
+    assert len(sp.queries) == searches and len(sp.created) == 1
+    (_, uris), = sp.added
+    assert len(uris) == 8
+
+
+def test_cancelled_apply_keeps_the_preview(e2e, capsys, monkeypatch):
+    sp, base = e2e
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+    assert cli.main(["build", "lets go", "--size", "6", "--apply"] + base) == 1
+    out = capsys.readouterr().out
+    assert sp.created == [] and 'python moods.py create "Lets go"' in out
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+    assert cli.main(["create", "lets go", "--name", "LFG later"] + base) == 0
+    assert sp.created == [("LFG later", False)]
+
+
+def test_create_without_a_preview_explains(e2e):
+    _, base = e2e
+    with pytest.raises(SystemExit, match="No saved preview"):
+        cli.main(["create", "lets go"] + base)

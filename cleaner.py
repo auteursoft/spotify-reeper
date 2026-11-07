@@ -240,13 +240,36 @@ def print_table(playlists, extra=None):
     print(f"\n{len(playlists)} playlist(s).")
 
 
-def confirm(prompt, assume_yes):
+def discard_typeahead(stream=None):
+    """Throw away keys pressed while a long job ran. The terminal keeps them, and the next
+    question would otherwise read them as its answer."""
+    stream = stream or sys.stdin
+    try:
+        if stream.isatty():
+            import termios
+            termios.tcflush(stream.fileno(), termios.TCIFLUSH)
+    except (ImportError, OSError, ValueError, AttributeError):
+        pass  # not a terminal (or Windows): nothing buffered to worry about
+
+
+def confirm(prompt, assume_yes, ask=None, flush=discard_typeahead, attempts=5):
+    """Ask before changing anything. Only "yes" proceeds and only "no" cancels; anything
+    else (a stray key, an empty Enter) asks again rather than throwing the work away."""
     if assume_yes:
         return True
-    try:
-        return input(f"{prompt} Type 'yes' to continue: ").strip().lower() == "yes"
-    except EOFError:
-        return False
+    ask = ask or input
+    flush()
+    for _ in range(attempts):
+        try:
+            answer = ask(f"{prompt} Type 'yes' or 'no': ").strip().lower()
+        except EOFError:
+            return False
+        if answer == "yes":
+            return True
+        if answer in ("no", "n"):
+            return False
+        print("Please type yes or no.", file=sys.stderr)
+    return False
 
 
 def cmd_list(sp, args, user_id):
