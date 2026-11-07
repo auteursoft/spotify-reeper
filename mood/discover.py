@@ -4,11 +4,21 @@ from itertools import zip_longest
 
 import numpy as np
 
+from .net import HttpError
 from .text import clean_title, fold, track_key
 
 
+def _safe(fetch, failures):
+    """A Last.fm discovery call; on a temporary failure, skip that source for this run."""
+    try:
+        return fetch()
+    except HttpError as err:
+        failures.append(str(err))
+        return []
+
+
 def external_candidates(lastfm, seeds, top_tags, exclude_keys, limit=300,
-                        per_seed=25, similar_artists=8, per_artist=3, per_tag=25):
+                        per_seed=25, similar_artists=8, per_artist=3, per_tag=25, log=None):
     """Songs from Last.fm related to the seeds, minus anything in exclude_keys.
 
     Three sources, interleaved so that no single one crowds out the others under `limit`:
@@ -17,19 +27,22 @@ def external_candidates(lastfm, seeds, top_tags, exclude_keys, limit=300,
       * top tracks for the Last.fm tags the mood model weights most
     Each candidate records why it was found ("via").
     """
-    streams = []
+    streams, failures = [], []
     for s in seeds:
-        streams.append([(t, f"similar to {s['title']}")
-                        for t in lastfm.similar_tracks(s["main_artist"], s["title"], per_seed)])
+        found = _safe(lambda: lastfm.similar_tracks(s["main_artist"], s["title"], per_seed), failures)
+        streams.append([(t, f"similar to {s['title']}") for t in found])
     seed_artists = list(dict.fromkeys(s["main_artist"] for s in seeds))
     for artist in seed_artists:
         stream = []
-        for other in lastfm.similar_artists(artist, similar_artists):
+        for other in _safe(lambda: lastfm.similar_artists(artist, similar_artists), failures):
             stream += [(t, f"artist like {artist}")
-                       for t in lastfm.artist_top_tracks(other, per_artist)]
+                       for t in _safe(lambda: lastfm.artist_top_tracks(other, per_artist), failures)]
         streams.append(stream)
     for tag in top_tags:
-        streams.append([(t, f"tagged {tag}") for t in lastfm.tag_top_tracks(tag, per_tag)])
+        found = _safe(lambda: lastfm.tag_top_tracks(tag, per_tag), failures)
+        streams.append([(t, f"tagged {tag}") for t in found])
+    if failures and log:
+        log(f"  {len(failures)} Last.fm lookups failed and were skipped (tried again next time)")
 
     out, seen = [], set(exclude_keys)
     for round_ in zip_longest(*streams):

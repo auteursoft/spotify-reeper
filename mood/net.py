@@ -6,7 +6,10 @@ USER_AGENT = "spotify-reeper/1.0 (+https://github.com/auteursoft/spotify-reeper)
 
 
 class HttpError(Exception):
-    pass
+    """A request failed (network, server, rate limit). Temporary: never cache it as "no data"."""
+
+
+MAX_RETRY_AFTER = 60  # seconds; a service asking for a longer pause fails the request instead
 
 
 class Http:
@@ -39,7 +42,10 @@ class Http:
                 if attempt == self.retries:
                     raise HttpError(f"{url}: HTTP {resp.status_code}")
                 retry_after = resp.headers.get("Retry-After")
-                self.sleep(float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt)
+                wait = float(retry_after) if retry_after and retry_after.isdigit() else 2 ** attempt
+                if wait > MAX_RETRY_AFTER:
+                    raise HttpError(f"{url}: HTTP {resp.status_code}, asked to wait {wait:.0f} s")
+                self.sleep(wait)
                 continue
             if resp.status_code >= 400:
                 raise HttpError(f"{url}: HTTP {resp.status_code}")
@@ -47,7 +53,11 @@ class Http:
         raise HttpError(url)  # unreachable
 
     def get_json(self, url, params=None):
-        return self._request(url, params).json()
+        resp = self._request(url, params)
+        try:
+            return resp.json()
+        except ValueError as err:  # an outage page instead of JSON
+            raise HttpError(f"{url}: unreadable reply") from err
 
     def download(self, url, path):
         with open(path, "wb") as f:
