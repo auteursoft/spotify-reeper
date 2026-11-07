@@ -247,3 +247,12 @@ def test_cli_reports_rate_limit_and_exits(monkeypatch, capsys):
     monkeypatch.setattr(cli, "build_parser", lambda: type("P", (), {"parse_args": lambda self, a: args})())
     assert cli.main(["analyze"]) == 1
     assert "about 22 hours" in capsys.readouterr().err
+
+
+def test_liked_songs_change_deeper_in_the_first_page_is_noticed(cache):
+    sp = CountingSpotify()
+    sp.liked = [{"added_at": f"2026-01-{d:02d}", "track": track(900 + d)} for d in range(1, 21)]
+    read(sp, cache)
+    sp.liked[12] = {"added_at": "2026-01-13", "track": track(4444)}   # swapped, same count
+    lib = read(sp, cache)
+    assert "spotify:track:" + f"{4444:022d}" in {t["uri"] for t in lib}

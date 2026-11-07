@@ -5,6 +5,7 @@ from .net import Http, HttpError
 from .text import clean_title, fold, same_song
 
 API = "https://api.deezer.com"
+NO_DATA = 800  # Deezer's "no data" error: a real "not found"
 
 
 class Deezer:
@@ -13,12 +14,17 @@ class Deezer:
         self.http = http or Http(min_interval=0.12)  # Deezer allows 50 requests / 5 s
 
     def _get(self, path, params=None):
-        try:
-            data = self.http.get_json(f"{API}/{path}", params)
-        except HttpError:
-            return None
-        if not isinstance(data, dict) or "error" in data:
-            return None
+        """The reply, or None if Deezer genuinely has no such data (error code 800).
+        Anything else that goes wrong (network, quota code 4, server busy) raises HttpError,
+        so it is never cached as "no match"."""
+        data = self.http.get_json(f"{API}/{path}", params)
+        if not isinstance(data, dict):
+            raise HttpError(f"Deezer: unexpected reply for {path}")
+        error = data.get("error")
+        if error:
+            if isinstance(error, dict) and error.get("code") == NO_DATA:
+                return None
+            raise HttpError(f"Deezer: {error}")
         return data
 
     def find_id(self, artist, title, isrc=None):
@@ -42,7 +48,8 @@ class Deezer:
         return cached(self.cache, "deezer:id", key, fetch)["id"]
 
     def preview_url(self, deezer_id):
-        """Preview URLs are signed and expire, so they are fetched fresh, never cached."""
+        """Preview URLs are signed and expire, so they are fetched fresh, never cached.
+        None if the track has no preview; HttpError if Deezer couldn't be asked."""
         track = self._get(f"track/{deezer_id}") or {}
         return track.get("preview") or None
 

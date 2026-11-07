@@ -50,10 +50,12 @@ def read_playlist(sp, playlist_id, snapshot_id=None, cache=None):
 
 def read_liked_songs(sp, cache=None, user_id=""):
     """(tracks, from_cache): Liked Songs. It has no snapshot_id, so the cached copy is used
-    while the count and the most recently liked songs are unchanged (one request)."""
+    while the count and the first page of most recently liked songs are unchanged (one
+    request). Liking or unliking a song changes the count or that page."""
     first = sp.current_user_saved_tracks(limit=50)
+    # The whole first page (up to 50 most recently liked) costs nothing extra to compare.
     recent = [[e.get("added_at"), (entry_item(e or {}) or {}).get("uri")]
-              for e in (first.get("items") or [])[:5]]
+              for e in (first.get("items") or [])]
     signature = [first.get("total"), recent]
     if cache is not None:
         hit = cache.get("spotify:liked", user_id)
@@ -132,7 +134,9 @@ def seed_playlist_tracks(sp, entries, cache=None):
         else:
             if by_name is None:
                 by_name = fetch_all_playlists(sp)
-            targets = [p for p in by_name if fold(p.get("name")) == fold(entry)]
+            # Exact name, ignoring only case and surrounding spaces (as documented).
+            targets = [p for p in by_name
+                       if (p.get("name") or "").strip().casefold() == entry.strip().casefold()]
             if not targets:
                 problems.append(f'no playlist named "{entry}" in your library')
                 continue

@@ -107,13 +107,32 @@ class MoodModel:
         rows = [i for i, p in enumerate(profiles) if p.get("audio")]
         if not rows:
             return [], np.zeros((0, self.emb_dim))
-        E = np.asarray([profiles[i]["audio"]["embedding"] for i in rows], dtype=float)
+        try:
+            E = np.asarray([profiles[i]["audio"]["embedding"] for i in rows], dtype=float)
+        except (TypeError, ValueError):  # a non-numeric value somewhere: check row by row
+            E = np.full((len(rows), self.emb_dim), np.nan)
+            for k, i in enumerate(rows):
+                try:
+                    E[k] = np.asarray(profiles[i]["audio"]["embedding"], dtype=float)
+                except (TypeError, ValueError):
+                    pass  # stays NaN, so it's rejected below
         ok = np.isfinite(E).all(axis=1)
         if not ok.all():
             self.unusable_audio += int((~ok).sum())
             rows = [r for r, good in zip(rows, ok) if good]
             E = E[ok]
         return rows, E
+
+    def _prepare(self, profiles):
+        """(profiles, audio): profiles with unusable audio set to None, so that a track whose
+        only data was a damaged analysis counts as having no data at all, plus the audio
+        rows and embedding array for them (see _audio_rows)."""
+        profiles = self._clean(profiles)
+        rows, E = self._audio_rows(profiles)
+        good = set(rows)
+        profiles = [p if not p.get("audio") or i in good else {**p, "audio": None}
+                    for i, p in enumerate(profiles)]
+        return profiles, (rows, E)
 
     def _fit_sound(self, E):
         self.sound_mean = self.sound_basis = None
@@ -176,7 +195,7 @@ class MoodModel:
 
     # ---------------- training ----------------
 
-    def fit(self, positives, negatives):
+    def fit(self, positives, negatives, min_positives=MIN_POSITIVES):
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import StandardScaler
 
@@ -185,18 +204,24 @@ class MoodModel:
         lengths = Counter(len(p["audio"].get("embedding") or []) for p in positives + negatives
                           if self.use_audio and p.get("audio"))
         self.emb_dim = lengths.most_common(1)[0][0] if lengths else 0
-        positives = [p for p in self._clean(positives) if has_signal(p)]
-        negatives = [p for p in self._clean(negatives) if has_signal(p)]
-        if len(positives) < MIN_POSITIVES:
+        n_pos = len(positives)
+        everyone, (rows, E) = self._prepare(list(positives) + list(negatives))
+        # Only tracks with real data are examples, decided after damaged audio is dropped.
+        keep = [i for i, p in enumerate(everyone) if has_signal(p)]
+        positives = [everyone[i] for i in keep if i < n_pos]
+        negatives = [everyone[i] for i in keep if i >= n_pos]
+        new_index = {old: k for k, old in enumerate(keep)}
+        kept_rows = [j for j, r in enumerate(rows) if r in new_index]
+        audio = ([new_index[rows[j]] for j in kept_rows], E[kept_rows])
+        if len(positives) < min_positives:
             raise NotEnoughData(
-                f"Only {len(positives)} seed songs have tags or audio; at least {MIN_POSITIVES} needed.")
+                f"Only {len(positives)} seed songs have tags or audio; at least {min_positives} needed.")
         if len(negatives) < MIN_NEGATIVES:
             raise NotEnoughData(
                 f"Only {len(negatives)} other library tracks are analyzed; at least {MIN_NEGATIVES} "
                 "needed. Run: python moods.py analyze")
-        everyone = positives + negatives
+        everyone = positives + negatives  # same order as `keep`, so `audio` lines up
         self.audio_names, self.tag_names = self._vocab(everyone, positives)
-        audio = self._audio_rows(everyone)  # the big embedding array, built once per fit
         self._fit_sound(audio[1])
         n_sound = 0 if self.sound_basis is None else len(self.sound_basis)
         self.feature_names = (list(self.audio_names) + [f"sound:{i + 1}" for i in range(n_sound)]
@@ -289,9 +314,10 @@ class MoodModel:
         """Probability-like fit, 0..1, for each profile (0 for ones with no data at all)."""
         if not profiles:
             return np.array([])
-        profiles = self._clean(profiles)
+        profiles, audio = self._prepare(profiles)
+        X = self._matrix(profiles, self._raw_matrix(profiles, audio))
         with quiet_math():
-            s = self.clf.predict_proba(self.scaler.transform(self._matrix(profiles)))[:, 1]
+            s = self.clf.predict_proba(self.scaler.transform(X))[:, 1]
         return np.where([has_signal(p) for p in profiles], s, 0.0)
 
     def decision(self, profiles):
@@ -300,14 +326,17 @@ class MoodModel:
         with no data at all."""
         if not profiles:
             return np.array([])
-        profiles = self._clean(profiles)
+        profiles, audio = self._prepare(profiles)
+        X = self._matrix(profiles, self._raw_matrix(profiles, audio))
         with quiet_math():
-            d = self.clf.decision_function(self.scaler.transform(self._matrix(profiles)))
+            d = self.clf.decision_function(self.scaler.transform(X))
         return np.where([has_signal(p) for p in profiles], d, -np.inf)
 
     def contributions(self, profile):
+        profiles, audio = self._prepare([profile])
+        X = self._matrix(profiles, self._raw_matrix(profiles, audio))
         with quiet_math():
-            z = self.scaler.transform(self._matrix(self._clean([profile])))[0]
+            z = self.scaler.transform(X)[0]
         return dict(zip(self.feature_names, z * self.clf.coef_[0]))
 
     def explain(self, profile, k=3):
@@ -379,7 +408,8 @@ def held_out_check(positives, negatives, folds=5, leave_one_out_max=20, **model_
         held = set(group)
         rest = [p for i, p in enumerate(positives) if i not in held]
         try:
-            m = MoodModel(**model_kwargs).fit(rest, negatives)
+            # One fewer seed than training needs, so a mood with exactly the minimum can be checked.
+            m = MoodModel(**model_kwargs).fit(rest, negatives, min_positives=MIN_POSITIVES - 1)
         except NotEnoughData:
             return []
         neg_scores = m.score(negatives)

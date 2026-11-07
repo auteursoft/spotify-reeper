@@ -16,6 +16,8 @@ STOP_TAGS = {
     "loved", "awesome", "best", "good", "great", "cool", "albums i own", "under 2000 listeners",
     "spotify", "beautiful", "amazing", "check out", "to listen", "all", "music", "songs",
 }
+NOT_FOUND = {6, 7}   # invalid parameters (no such track/artist) / invalid resource
+BAD_KEY = {10, 26}   # invalid or suspended API key
 MIN_TAG_COUNT = 5  # Last.fm tag counts run 0-100 relative to the item's top tag
 
 
@@ -51,13 +53,21 @@ class LastFM:
         self.http = http or Http(min_interval=0.25)
 
     def _call(self, method, **params):
+        """The reply; {} when Last.fm says the track/artist/tag doesn't exist (error 6 or 7).
+        Other failures (network, outage, rate limit) raise HttpError, which callers don't
+        cache, so the next run tries again. A rejected API key stops with a clear message."""
         params.update(method=method, api_key=self.api_key, format="json", autocorrect=1)
-        try:
-            data = self.http.get_json(API, params)
-        except HttpError:
-            return {}
-        if "error" in data:  # e.g. 6 = not found; treat as no data
-            return {}
+        data = self.http.get_json(API, params)
+        if not isinstance(data, dict):
+            raise HttpError(f"Last.fm {method}: unexpected reply")
+        if "error" in data:
+            code = data.get("error")
+            if code in NOT_FOUND:
+                return {}
+            if code in BAD_KEY:
+                raise SystemExit("Last.fm rejected your API key: " + str(data.get("message", ""))
+                                 + "\nCheck lastfm_api_key in config.json (see README).")
+            raise HttpError(f"Last.fm {method}: error {code}: {data.get('message', '')}")
         return data
 
     def track_tags(self, artist, title):

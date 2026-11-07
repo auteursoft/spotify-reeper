@@ -275,6 +275,8 @@ def plan_build(ctx, mood_name, mood, size=40, horizon=0.3, max_per_artist=3, min
 
     if not 0 <= horizon <= 1:
         raise SystemExit("--horizon must be between 0 and 1.")
+    if not 0 <= min_fit <= 1:
+        raise SystemExit("--min-fit must be between 0 and 1 (e.g. 0.5 = the better-fitting half).")
     lib = library if library is not None else get_library(ctx)
     model, seeds, _, lib_profiles, _ = train(ctx, mood_name, mood, lib)
 
@@ -285,7 +287,8 @@ def plan_build(ctx, mood_name, mood, size=40, horizon=0.3, max_per_artist=3, min
             f"{', '.join(tags) or 'none'})...")
         exclude = {p["key"] for p in lib_profiles} | {track_key(s["main_artist"], s["title"])
                                                      for s in seeds}
-        cands = external_candidates(ctx.profiler.lastfm, seeds, tags, exclude, limit=depth)
+        cands = external_candidates(ctx.profiler.lastfm, seeds, tags, exclude, limit=depth,
+                                    log=log)
         log(f"  {len(cands)} candidates")
         profiles = ctx.profile_all(cands, "new candidates")
     library, external = scored_pools(model, lib, lib_profiles, cands, profiles)
@@ -313,6 +316,8 @@ def cmd_build(ctx):
     a = ctx.args
     if not 0 <= a.horizon <= 1:
         raise SystemExit("--horizon must be between 0 and 1.")
+    if not 0 <= a.min_fit <= 1:
+        raise SystemExit("--min-fit must be between 0 and 1 (e.g. 0.5 = the better-fitting half).")
     mood_name, mood = get_mood(load_moods(a.moods), a.mood)
     lib = get_library(ctx)
     model, picks = plan_build(ctx, mood_name, mood, a.size, a.horizon, a.max_per_artist,

@@ -147,9 +147,12 @@ def test_lastfm_falls_back_to_artist_tags_at_half_weight(cache):
         {"tags": {"power pop": 0.5}, "source": "artist"}
 
 
-def test_lastfm_network_failure_means_no_data(cache):
+def test_lastfm_network_failure_is_not_cached(cache):
     lf = LastFM("key", cache, FakeHttp(lambda u, p: HttpError("down")))
-    assert lf.similar_tracks("A", "B") == []
+    with pytest.raises(HttpError):
+        lf.similar_tracks("A", "B")
+    lf.http = FakeHttp(lambda u, p: {"similartracks": {"track": [{"name": "T", "artist": {"name": "X"}}]}})
+    assert lf.similar_tracks("A", "B") == [{"artist": "X", "title": "T"}]  # asked again
 
 
 def test_lastfm_requires_key(cache):
@@ -802,7 +805,8 @@ def test_held_out_check_uses_folds_for_many_seeds(monkeypatch):
     neg = [synth_profile(300 + i, False) for i in range(60)] + [synth_profile(400 + i, True) for i in range(5)]
     fits = []
     real_fit = MoodModel.fit
-    monkeypatch.setattr(MoodModel, "fit", lambda self, p, n: fits.append(len(p)) or real_fit(self, p, n))
+    monkeypatch.setattr(MoodModel, "fit",
+                        lambda self, p, n, **kw: fits.append(len(p)) or real_fit(self, p, n, **kw))
     results = held_out_check(pos, neg)
     assert len(fits) == 5 and all(n == 24 for n in fits)     # 5 rounds, 6 seeds held out each
     assert [r[0]["key"] for r in results] == [p["key"] for p in pos]  # every seed, once, in order
@@ -1058,3 +1062,145 @@ def test_create_without_a_preview_explains(e2e):
     _, base = e2e
     with pytest.raises(SystemExit, match="No saved preview"):
         cli.main(["create", "lets go"] + base)
+
+
+# ======================= review fixes: temporary failures are never cached =======================
+
+class SwitchableHttp(FakeHttp):
+    """FakeHttp whose answer can be swapped mid-test (outage, then recovery)."""
+
+
+def test_deezer_outage_is_not_cached_as_no_match(cache):
+    http = SwitchableHttp(lambda u, p: HttpError("connection reset"))
+    dz = Deezer(cache, http)
+    with pytest.raises(HttpError):
+        dz.find_id("R.E.M.", "Superman", "USIR1")
+    http.answer = lambda u, p: {"id": 77}
+    assert dz.find_id("R.E.M.", "Superman", "USIR1") == 77           # asked again, found
+
+
+@pytest.mark.parametrize("error,cached_as_none", [
+    ({"type": "DataException", "message": "no data", "code": 800}, True),        # real not-found
+    ({"type": "Exception", "message": "Quota limit exceeded", "code": 4}, False),  # Deezer rate limit
+])
+def test_deezer_error_codes(cache, error, cached_as_none):
+    http = SwitchableHttp(lambda u, p: {"error": error} if "isrc:" in u else {"data": []})
+    dz = Deezer(cache, http)
+    if cached_as_none:
+        assert dz.find_id("A", "B", "ISRC9") is None
+        http.answer = lambda u, p: {"id": 5}
+        assert dz.find_id("A", "B", "ISRC9") is None                  # remembered
+    else:
+        with pytest.raises(HttpError):
+            dz.find_id("A", "B", "ISRC9")
+        http.answer = lambda u, p: {"id": 5}
+        assert dz.find_id("A", "B", "ISRC9") == 5                     # not remembered
+
+
+@pytest.mark.parametrize("code,outcome", [(6, "empty"), (29, "retry"), (11, "retry"), (10, "stop")])
+def test_lastfm_error_codes(cache, code, outcome):
+    http = SwitchableHttp(lambda u, p: {"error": code, "message": "x"})
+    lf = LastFM("key", cache, http)
+    if outcome == "stop":
+        with pytest.raises(SystemExit, match="API key"):
+            lf.artist_tags("A")
+        return
+    if outcome == "empty":
+        assert lf.artist_tags("A") == {}
+        http.answer = lambda u, p: {"toptags": {"tag": [{"name": "rock", "count": 100}]}}
+        assert lf.artist_tags("A") == {}                              # a real "not found": kept
+    else:
+        with pytest.raises(HttpError):
+            lf.artist_tags("A")
+        http.answer = lambda u, p: {"toptags": {"tag": [{"name": "rock", "count": 100}]}}
+        assert lf.artist_tags("A") == {"rock": 1.0}                   # rate limit/outage: retried
+
+
+def test_profile_survives_outages_and_retries_next_time(cache):
+    class DownLastFM:
+        calls = 0
+
+        def track_tags(self, artist, title):
+            DownLastFM.calls += 1
+            raise HttpError("Last.fm down")
+
+    class DownDeezer(FakeDeezer):
+        def find_id(self, artist, title, isrc=None):
+            raise HttpError("Deezer down")
+    logs = []
+    prof = Profiler(cache, DownLastFM(), DownDeezer(), FakeAnalyzer(), log=logs.append).profile("A", "S")
+    assert prof["tags"] == {} and prof["tag_source"] == "error" and prof["audio_status"] == "error"
+    assert len(logs) == 2
+
+    class PreviewDown(FakeDeezer):
+        def preview_url(self, deezer_id):
+            raise HttpError("Deezer down")
+    p = Profiler(cache, FakeLastFMTags(), PreviewDown({"S": 9}), FakeAnalyzer(), log=lambda m: None)
+    assert p.profile("A", "S")["audio_status"] == "error"
+    assert cache.get("audio", "9") is None                            # not saved as "no preview"
+
+
+def test_http_does_not_sleep_through_long_retry_after():
+    sleeps = []
+    s = Session([Resp(429, headers={"Retry-After": "80040"})])
+    with pytest.raises(HttpError, match="80040"):
+        Http(min_interval=0, session=s, sleep=sleeps.append).get_json("u")
+    assert sleeps == [] and len(s.calls) == 1
+
+
+def test_http_unreadable_reply_is_a_temporary_failure():
+    class Html(Resp):
+        def json(self):
+            raise ValueError("Expecting value")
+    with pytest.raises(HttpError, match="unreadable"):
+        Http(min_interval=0, session=Session([Html(200)]), sleep=lambda _: 0).get_json("u")
+
+
+def test_discovery_skips_failed_lastfm_sources():
+    class Flaky(FakeLastFMDiscover):
+        def similar_tracks(self, artist, title, limit=25):
+            raise HttpError("Last.fm down")
+    logs = []
+    out = discover.external_candidates(Flaky(), [{"main_artist": "R.E.M.", "title": "Superman"}],
+                                       ["power pop"], set(), log=logs.append)
+    assert [c["title"] for c in out] == ["Hit", "power pop anthem"]
+    assert "failed and were skipped" in logs[0]
+
+
+# ======================= review fixes: model and matching =======================
+
+def test_damaged_audio_only_profiles_are_not_training_examples():
+    pos, neg = library_split()
+    damaged = [synth_profile(990 + i, False, tags=False) for i in range(5)]
+    damaged[0]["audio"]["embedding"][0] = float("nan")
+    damaged[1]["audio"]["embedding"][0] = float("inf")
+    damaged[2]["audio"]["embedding"][0] = "not a number"
+    damaged = damaged[:3]
+    m = MoodModel().fit(pos, neg + damaged)
+    assert m.n_negatives == len(neg)                                  # the 3 damaged ones dropped
+    assert list(m.score(damaged)) == [0.0, 0.0, 0.0]
+    assert all(d == -np.inf for d in m.decision(damaged))
+
+
+def test_check_works_with_exactly_the_minimum_seeds():
+    pos, neg = library_split(n_pos=5)
+    results = held_out_check(pos, neg)
+    assert len(results) == 5
+
+
+def test_seed_playlist_names_match_exactly_ignoring_case():
+    sp = PlaylistSpotify({"p1": [sp_track("A", "B")]}, {"p1": "zb- Gym"})
+    assert len(library.seed_playlist_tracks(sp, ["  ZB- GYM "])[0]) == 1
+    tracks, problems = library.seed_playlist_tracks(sp, ["zb gym"])   # different punctuation
+    assert tracks == [] and problems
+
+
+def test_titles_keep_their_article_artists_do_not():
+    assert track_key("Pink Floyd", "The Wall") != track_key("Pink Floyd", "Wall")
+    assert track_key("The Replacements", "Alex Chilton") == track_key("Replacements", "Alex Chilton")
+
+
+def test_min_fit_must_be_a_share(e2e):
+    _, base = e2e
+    with pytest.raises(SystemExit, match="min-fit"):
+        cli.main(["build", "lets go", "--min-fit", "50"] + base)

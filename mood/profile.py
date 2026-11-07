@@ -16,7 +16,12 @@ class Profiler:
         self.log = log
 
     def profile(self, artist, title, isrc=None):
-        tag_info = self.lastfm.track_tags(artist, title)
+        try:
+            tag_info = self.lastfm.track_tags(artist, title)
+        except HttpError as err:
+            # Not cached: the next run asks Last.fm again.
+            self.log(f"  Last.fm lookup failed for {artist} - {title}: {err}")
+            tag_info = {"tags": {}, "source": "error"}
         audio, status = self.audio(artist, title, isrc)
         return {"key": track_key(artist, title), "artist": artist, "title": title,
                 "tags": tag_info["tags"], "tag_source": tag_info["source"],
@@ -26,7 +31,11 @@ class Profiler:
         """(audio features or None, status). Status is ok / no_match / no_preview / error / off."""
         if self.analyzer is None or self.deezer is None:
             return None, "off"
-        deezer_id = self.deezer.find_id(artist, title, isrc)
+        try:
+            deezer_id = self.deezer.find_id(artist, title, isrc)
+        except HttpError as err:
+            self.log(f"  Deezer lookup failed for {artist} - {title}: {err}")
+            return None, "error"  # not cached: tried again next run
         if not deezer_id:
             return None, "no_match"
         hit = self.cache.get("audio", str(deezer_id))
@@ -43,7 +52,10 @@ class Profiler:
                 self.deezer.download(url, path)
                 features = self.analyzer.analyze(path)
             finally:
-                os.remove(path)
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass  # never let cleanup hide the real outcome
         except HttpError as err:
             # Network trouble is not cached, so the next run tries again.
             self.log(f"  audio download failed for {artist} - {title}: {err}")
