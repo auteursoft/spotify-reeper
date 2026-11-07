@@ -9,7 +9,8 @@ DEFAULT_PATH = "reeper-cache.db"
 
 class Cache:
     def __init__(self, path=DEFAULT_PATH):
-        self.db = sqlite3.connect(path)
+        self.db = sqlite3.connect(path, timeout=30)
+        self.db.execute("PRAGMA journal_mode=WAL")  # lets the app read while analysis writes
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS kv (ns TEXT, key TEXT, value TEXT, updated REAL, "
             "PRIMARY KEY (ns, key))")

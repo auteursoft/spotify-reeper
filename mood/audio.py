@@ -65,6 +65,16 @@ def setup_models(model_dir, http, log=print):
     return failures
 
 
+def audio_supported():
+    """Whether this build includes Essentia. The Mac App Store build leaves it out (Essentia is
+    AGPL-3.0, which conflicts with App Store terms) and judges songs by Last.fm tags only."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("essentia") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def models_present(model_dir):
     return all(os.path.exists(os.path.join(model_dir, name)) for name, _ in model_files())
 

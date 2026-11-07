@@ -237,6 +237,15 @@ def print_summary(model, mood_name):
               "model's weight.")
 
 
+def check_verdict(median):
+    """(level, text) for the held-out check's median percentile."""
+    if median >= 80:
+        return "good", "good: the model generalizes"
+    if median >= 60:
+        return "fair", "fair: add more seeds that share the feel"
+    return "weak", "weak: the seeds may not share one mood, or need more of them"
+
+
 def cmd_train(ctx):
     from .model import held_out_check
     mood_name, mood = get_mood(load_moods(ctx.args.moods), ctx.args.mood)
@@ -249,37 +258,36 @@ def cmd_train(ctx):
         rows = [[p["title"], p["artist"], f"top {100 - pct:.0f}%"] for p, pct in results]
         table(rows, ["Seed", "Artist", "Ranked in your library"])
         median = sorted(pct for _, pct in results)[len(results) // 2]
-        verdict = ("good: the model generalizes" if median >= 80 else
-                   "fair: add more seeds that share the feel" if median >= 60 else
-                   "weak: the seeds may not share one mood, or need more of them")
+        verdict = check_verdict(median)[1]
         print(f"\nMedian: top {100 - median:.0f}% ({verdict}).")
         print("Songs in your library that fit the mood but aren't seeds also rank high, so if a "
               "lot of\nyour library fits this mood, even a perfect model can't put seeds in the top 5%.")
     return 0
 
 
-def cmd_build(ctx):
+def plan_build(ctx, mood_name, mood, size=40, horizon=0.3, max_per_artist=3, min_fit=0.5,
+               depth=300, library=None):
+    """Train the mood and choose a playlist. Returns (model, picks); creates nothing.
+    Each pick has title, artist, uri, fit (0..1: the share of your library it out-fits),
+    new (bool), via, and profile. Each song appears once, whatever versions exist."""
     from .discover import choose, external_candidates, scored_pools
     from .library import search_track_cached
 
-    a = ctx.args
-    if not 0 <= a.horizon <= 1:
+    if not 0 <= horizon <= 1:
         raise SystemExit("--horizon must be between 0 and 1.")
-    if not 0 <= a.min_fit <= 1:
+    if not 0 <= min_fit <= 1:
         raise SystemExit("--min-fit must be between 0 and 1 (e.g. 0.5 = the better-fitting half).")
-    mood_name, mood = get_mood(load_moods(a.moods), a.mood)
-    lib = get_library(ctx)
+    lib = library if library is not None else get_library(ctx)
     model, seeds, _, lib_profiles, _ = train(ctx, mood_name, mood, lib)
-    print_summary(model, mood_name)
 
     cands, profiles = [], []
-    if a.horizon > 0:
+    if horizon > 0:
         tags = model.top_tags(5)
         log(f"Looking beyond your library (Last.fm: similar tracks, similar artists, tags: "
             f"{', '.join(tags) or 'none'})...")
         exclude = {p["key"] for p in lib_profiles} | {track_key(s["main_artist"], s["title"])
                                                      for s in seeds}
-        cands = external_candidates(ctx.profiler.lastfm, seeds, tags, exclude, limit=a.depth,
+        cands = external_candidates(ctx.profiler.lastfm, seeds, tags, exclude, limit=depth,
                                     log=log)
         log(f"  {len(cands)} candidates")
         profiles = ctx.profile_all(cands, "new candidates")
@@ -289,11 +297,36 @@ def cmd_build(ctx):
         t = search_track_cached(ctx.sp, c["main_artist"], c["title"], ctx.cache)
         return {k: t[k] for k in ("uri", "artist", "title", "isrc")} if t else None
 
-    picks = choose(library, external, a.size, a.horizon, a.max_per_artist, a.min_fit, resolve)
+    picks = choose(library, external, size, horizon, max_per_artist, min_fit, resolve)
+    return model, picks
+
+
+def default_playlist_name(mood_name):
+    return f"{mood_name} · mood mix {datetime.date.today():%Y-%m-%d}"
+
+
+def create_playlist(sp, name, uris, mood_name):
+    created = sp.current_user_playlist_create(
+        name, public=False, description=f'Mood "{mood_name}", built by spotify-reeper')
+    add_uris(sp, created["id"], uris)
+    return created
+
+
+def cmd_build(ctx):
+    a = ctx.args
+    if not 0 <= a.horizon <= 1:
+        raise SystemExit("--horizon must be between 0 and 1.")
+    if not 0 <= a.min_fit <= 1:
+        raise SystemExit("--min-fit must be between 0 and 1 (e.g. 0.5 = the better-fitting half).")
+    mood_name, mood = get_mood(load_moods(a.moods), a.mood)
+    lib = get_library(ctx)
+    model, picks = plan_build(ctx, mood_name, mood, a.size, a.horizon, a.max_per_artist,
+                              a.min_fit, a.depth, library=lib)
+    print_summary(model, mood_name)
     if not picks:
         print("\nNo tracks fit well enough. Try a lower --min-fit, or add more seeds.")
         return 1
-    name = a.name or f"{mood_name} · mood mix {datetime.date.today():%Y-%m-%d}"
+    name = a.name or default_playlist_name(mood_name)
     saved = save_preview(ctx, mood_name, name, picks, model)
     print()
     print_picks(saved["picks"])
@@ -336,10 +369,7 @@ def create_from(ctx, preview, name, assume_yes):
         print("Not created. The preview is saved; create it any time with:\n"
               f'  python moods.py create "{mood_name}"')
         return 1
-    uris = [p["uri"] for p in picks if p.get("uri")]
-    created = ctx.sp.current_user_playlist_create(
-        name, public=False, description=f'Mood "{mood_name}", built by spotify-reeper')
-    add_uris(ctx.sp, created["id"], uris)
+    created = create_playlist(ctx.sp, name, [p["uri"] for p in picks if p.get("uri")], mood_name)
     print(f"Created: {(created.get('external_urls') or {}).get('spotify', created['id'])}")
     return 0
 

@@ -1,0 +1,59 @@
+# XcodeGen project definition. Generate Reeper.xcodeproj with:
+#   brew install xcodegen && cd macapp && xcodegen
+# See macapp/README.md.
+name: Reeper
+options:
+  bundleIdPrefix: com.auteursoft
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    ARCHS: arm64              # the bundled Python wheels are Apple Silicon builds
+    ENABLE_HARDENED_RUNTIME: YES
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""      # set to your Apple Developer Team ID
+    DEAD_CODE_STRIPPING: YES
+targets:
+  Reeper:
+    type: application
+    platform: macOS
+    sources:
+      - path: Reeper/Core
+      - path: Reeper/App
+      - path: Reeper/Resources/Assets.xcassets
+      - path: Reeper/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.auteursoft.reeper
+        PRODUCT_NAME: Reeper
+        INFOPLIST_FILE: Reeper/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_USER_SCRIPT_SANDBOXING: NO   # the embed script copies the Python runtime in
+        COMBINE_HIDPI_IMAGES: YES
+      configs:
+        # Debug is not sandboxed, so it can run a Python and source checkout from
+        # REEPER_PYTHON / REEPER_SOURCE (set them in the scheme) without rebuilding Python.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: Reeper/Resources/Reeper-Debug.entitlements
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Reeper/Resources/Reeper.entitlements
+    postBuildScripts:
+      - name: Embed Python engine
+        script: '"$SRCROOT/scripts/embed_engine.sh"'
+        basedOnDependencyAnalysis: false
+    scheme:
+      environmentVariables:
+        - variable: REEPER_PYTHON
+          value: "$(SRCROOT)/../.venv/bin/python"
+          isEnabled: false
+        - variable: REEPER_SOURCE
+          value: "$(SRCROOT)/.."
+          isEnabled: false

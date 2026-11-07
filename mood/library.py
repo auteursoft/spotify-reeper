@@ -238,10 +238,19 @@ def resolve_seed(sp, seed, cache=None):
 
 
 def resolve_seed_uncached(sp, seed):
-    """A seed is {"artist", "title"} or a Spotify track URI/URL. Returns a track dict or None."""
+    """A seed is {"artist", "title"} (optionally with "uri"), or a Spotify track URI/URL.
+    Returns a track dict or None."""
     if isinstance(seed, str):
         m = _SPOTIFY_ID.search(seed)
         if not m:
             return None
         return to_track(sp.track(m.group(1)))
+    m = _SPOTIFY_ID.search(seed.get("uri") or "")
+    if m:
+        try:
+            return to_track(sp.track(m.group(1)))
+        except RateLimited:
+            raise
+        except Exception:
+            pass  # fall back to searching by name
     return search_track(sp, seed.get("artist", ""), seed.get("title", ""))
