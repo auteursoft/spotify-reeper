@@ -1,5 +1,6 @@
 {
     "client_id": "YOUR CLIENT ID",
     "client_secret": "YOUR CLIENT SECRET",
-    "redirect_uri": "http://127.0.0.1:7777/callback"
+    "redirect_uri": "http://127.0.0.1:7777/callback",
+    "lastfm_api_key": "YOUR LAST.FM API KEY (only needed for mood playlists)"
 }
