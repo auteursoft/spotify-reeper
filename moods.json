@@ -1,0 +1,24 @@
+{
+    "lets fucking go": {
+        "seeds": [
+            {"artist": "The Replacements", "title": "Alex Chilton - 2008 Remaster"},
+            {"artist": "R.E.M.", "title": "Departure"},
+            {"artist": "R.E.M.", "title": "Begin The Begin"},
+            {"artist": "R.E.M.", "title": "Superman"},
+            {"artist": "R.E.M.", "title": "Pop Song 89 - Remastered 2013"},
+            {"artist": "10,000 Maniacs", "title": "These Are Days"},
+            {"artist": "The Lemonheads", "title": "Mrs. Robinson - 2022 Remastered Edition"},
+            {"artist": "The Knack", "title": "My Sharona"},
+            {"artist": "The English Beat", "title": "Save It for Later - 2012 Remaster"}
+        ],
+        "seed_playlists": ["https://open.spotify.com/playlist/5BVMkZmPaM0oGirUalYRh8?si=38ca253fe4af40bf"]
+    },
+    "romantic": {
+        "seeds": [],
+        "seed_playlists": []
+    },
+    "chill and work in the garage": {
+        "seeds": [],
+        "seed_playlists": []
+    }
+}

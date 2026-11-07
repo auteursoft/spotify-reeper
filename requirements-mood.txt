@@ -1,0 +1,3 @@
+-r requirements.txt
+essentia-tensorflow==2.1b6.dev1389
+scikit-learn==1.9.1

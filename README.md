@@ -82,13 +82,88 @@ What each command does on Spotify:
 
 Since Spotify's February 2026 API changes, track listings are only available for playlists you own or collaborate on, so `move` will report an error for a followed playlist you don't own and leave it alone. Your Spotify developer app's owner also needs Premium.
 
-### Running the tests
+## Mood playlists (`moods.py`)
+
+Builds playlists for a mood, learned from songs you pick. You give a handful of seed songs that nail the mood; it learns what they have in common compared with the rest of your library, then finds tracks that fit, both in your library and outside it.
+
+It judges two things about every track:
+
+- **What it sounds like.** Free audio models from [Essentia](https://essentia.upf.edu/models.html) listen to the track's 30-second preview from Deezer and estimate moods such as aggressive, happy, relaxed, danceable, energetic, romantic or sexy, plus an overall fingerprint of the sound. This is how it tells songs that *actually* rock from songs that are only called rock.
+- **What people say about it.** Crowd tags from Last.fm, such as "power pop", "jangle pop" or "sultry".
+
+Your seed songs are the core of each mood. Songs from outside your library are found through Last.fm (tracks similar to your seeds, top tracks by similar artists, and top tracks for the tags the model cares about most), and they are scored by the same model as everything else.
+
+### Setup (once)
+
+1. Python 3.13 on macOS 15 or later (Apple Silicon or Intel), or Linux.
+2. Install the extra libraries (a few hundred MB, mostly TensorFlow):
+   ```
+   pip install -r requirements-mood.txt
+   ```
+3. Get a free Last.fm API key at https://www.last.fm/api/account/create (only the API key, not the shared secret) and add it to `config.json` as `"lastfm_api_key"`.
+4. Download the audio models (a few tens of MB, into `models/`, which is git-ignored):
+   ```
+   python moods.py setup
+   ```
+
+### Defining moods
+
+Moods live in `moods.json`. Each mood has seed songs (artist and title as they appear on Spotify, or a Spotify track link) and optionally whole playlists whose songs all count as seeds. A seed playlist can be a Spotify playlist link or the exact name of a playlist in your library. Spotify only lets apps read playlists you own or collaborate on, so to train on someone else's playlist, copy its songs into one of your own first.
+
+```json
+{
+    "lets fucking go": {
+        "seeds": [
+            {"artist": "The Knack", "title": "My Sharona"},
+            "https://open.spotify.com/track/..."
+        ],
+        "seed_playlists": ["https://open.spotify.com/playlist/...", "zb- gym"]
+    }
+}
+```
+
+Use at least 5 seeds; 10 to 30 that really share the feel work best. Mood names are matched ignoring case.
+
+### Using it
+
+```
+python moods.py seeds "lets fucking go"     # check each seed was found, tagged and analyzed
+python moods.py analyze                     # analyze your whole library (first time: long)
+python moods.py train "lets fucking go"     # what did it learn, and how well?
+python moods.py build "lets fucking go"     # preview a 40-track playlist
+python moods.py create "lets fucking go"    # create exactly the playlist the last build showed
+```
+
+- **analyze** reads your playlists (the ones you own or collaborate on) and Liked Songs, then fetches tags and analyzes previews for every track. The first run takes roughly a second per track, so allow an hour for a few thousand tracks. Everything is cached in `reeper-cache.db` (git-ignored); you can stop it with Ctrl-C and re-run to continue. `build` and `train` analyze anything missing themselves, but running `analyze` first is easier to watch.
+- **train** shows the features that most raise and lower a track's score, then checks the model. It leaves each seed out in turn, retrains, and reports where that seed ranks in your library. Seeds that rank high mean the model learned the mood rather than memorizing your list.
+- **build** prints the playlist with each song's fit, whether it's new to you, how it was found, and why it fits. Fit is how much better a song fits the mood than the rest of your library: 99.5 means better than 99.5% of it. Each song appears once, even if your library has several versions of it (album and compilation copies, remasters, live recordings); the original is preferred. Nothing is created without `--apply`; with `--apply`, it creates a private playlist named "<mood> · mood mix <date>" (or `--name`).
+- **create** makes the playlist from the mood's latest preview, without rebuilding anything, so what you approved is exactly what you get. `build --apply` builds and creates in one go. Before creating, both ask you to type `yes` or `no`; keys pressed while the build was running are ignored, and anything else asks again.
+
+`build` options:
+
+| Option | Meaning |
+|---|---|
+| `--size N` | number of tracks (default 40) |
+| `--horizon X` | share from outside your library, 0 to 1 (default 0.3). 0 = only your library, 1 = only new music |
+| `--max-per-artist N` | default 3 |
+| `--min-fit X` | leave out songs that fit the mood worse than this share of your library, 0 to 1 (default 0.5: the better-fitting half) |
+| `--depth N` | how many outside candidates to analyze (default 300; more = wider search, slower first run) |
+
+Options for every command: `--no-audio` (Last.fm tags only; no models needed), `--no-liked` (leave Liked Songs out), `--limit N` (only the first N library tracks, for a quick trial), `--moods`, `--config`, `--models`, `--cache` (file locations).
+
+Notes:
+
+- Tracks with no Deezer preview are scored on their tags, and tracks with no tags on their audio. Tracks with neither are never picked.
+- The Essentia models are licensed CC BY-NC-SA 4.0: fine for personal use, not for commercial use.
+- Spotify stopped offering its own audio features and previews to new apps in 2024, which is why this uses Deezer previews and Essentia instead.
+
+## Running the tests
 
 ```
 pip install -r requirements-dev.txt
 python -m pytest tests
 ```
 
-The tests use a fake Spotify client, so they need no credentials and change nothing in your account.
+The tests use fake Spotify, Last.fm and Deezer clients and fake audio models, so they need no credentials or network access and change nothing in your account.
 
 © 2026, Professor Doctor Sean P. Goggins, the Dork Union, and ["Mr. Hand's Songs of Spicolli"](https://open.spotify.com/playlist/2aOikiOH69uiC9VHIAODA6?si=d9c7ac2492bf43fa), which is also listed in the [`playlist.md`](playlist.md) file. Playlist generated using [*spotify-reeper*](https://github.com/auteursoft/spotify-reeper.git)

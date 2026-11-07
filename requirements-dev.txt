@@ -1,1 +1,2 @@
 pytest==8.4.2
+scikit-learn==1.9.1
