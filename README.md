@@ -131,12 +131,13 @@ python moods.py seeds "lets fucking go"     # check each seed was found, tagged 
 python moods.py analyze                     # analyze your whole library (first time: long)
 python moods.py train "lets fucking go"     # what did it learn, and how well?
 python moods.py build "lets fucking go"     # preview a 40-track playlist
-python moods.py build "lets fucking go" --size 30 --horizon 0.5 --apply   # create it
+python moods.py create "lets fucking go"    # create exactly the playlist the last build showed
 ```
 
 - **analyze** reads your playlists (the ones you own or collaborate on) and Liked Songs, then fetches tags and analyzes previews for every track. The first run takes roughly a second per track, so allow an hour for a few thousand tracks. Everything is cached in `reeper-cache.db` (git-ignored); you can stop it with Ctrl-C and re-run to continue. `build` and `train` analyze anything missing themselves, but running `analyze` first is easier to watch.
 - **train** shows the features that most raise and lower a track's score, then checks the model. It leaves each seed out in turn, retrains, and reports where that seed ranks in your library. Seeds that rank high mean the model learned the mood rather than memorizing your list.
 - **build** prints the playlist with each song's fit, whether it's new to you, how it was found, and why it fits. Fit is how much better a song fits the mood than the rest of your library: 99.5 means better than 99.5% of it. Each song appears once, even if your library has several versions of it (album and compilation copies, remasters, live recordings); the original is preferred. Nothing is created without `--apply`; with `--apply`, it creates a private playlist named "<mood> · mood mix <date>" (or `--name`).
+- **create** makes the playlist from the mood's latest preview, without rebuilding anything, so what you approved is exactly what you get. `build --apply` builds and creates in one go. Before creating, both ask you to type `yes` or `no`; keys pressed while the build was running are ignored, and anything else asks again.
 
 `build` options:
 

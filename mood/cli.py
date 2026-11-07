@@ -290,24 +290,48 @@ def cmd_build(ctx):
     if not picks:
         print("\nNo tracks fit well enough. Try a lower --min-fit, or add more seeds.")
         return 1
-    rows = [[i, p["title"], p["artist"], f"{p['fit'] * 100:.1f}",
-             "NEW" if p["new"] else "", p["via"], "; ".join(model.explain(p["profile"]))]
-            for i, p in enumerate(picks, 1)]
-    print()
-    table(rows, ["#", "Title", "Artist", "Fit", "", "Found via", "Why"])
-    print("\nFit: how much better the song fits this mood than the rest of your library "
-          "(99.5 = better than 99.5% of it).")
-    n_new = sum(p["new"] for p in picks)
     name = a.name or f"{mood_name} · mood mix {datetime.date.today():%Y-%m-%d}"
+    saved = save_preview(ctx, mood_name, name, picks, model)
+    print()
+    print_picks(saved["picks"])
+    n_new = sum(p["new"] for p in picks)
     print(f'\n{len(picks)} tracks ({n_new} new to you) for "{name}".')
     if len(picks) < a.size:
         print(f"Only {len(picks)} different songs of {a.size} reached the minimum fit of "
               f"{a.min_fit * 100:.0f}.")
     if not a.apply:
-        print("Dry run: no playlist created. Re-run with --apply to create it.")
+        print("Dry run: no playlist created. This preview is saved; to create exactly this "
+              f'playlist without rebuilding, run:\n  python moods.py create "{mood_name}"')
         return 0
-    if not confirm(f'Create private playlist "{name}" with {len(picks)} tracks?', a.yes):
-        print("Aborted.")
+    return create_from(ctx, saved, name, a.yes)
+
+
+def save_preview(ctx, mood_name, name, picks, model):
+    """Keep the latest preview for each mood, so creating it never needs a rebuild."""
+    preview = {
+        "mood": mood_name, "name": name, "saved": time.time(),
+        "picks": [{"uri": p.get("uri"), "title": p["title"], "artist": p["artist"],
+                   "fit": p["fit"], "new": bool(p["new"]), "via": p.get("via"),
+                   "why": model.explain(p["profile"])} for p in picks],
+    }
+    ctx.cache.set("preview", fold(mood_name), preview)
+    return preview
+
+
+def print_picks(picks):
+    rows = [[i, p["title"], p["artist"], f"{p['fit'] * 100:.1f}", "NEW" if p["new"] else "",
+             p.get("via") or "", "; ".join(p.get("why") or [])] for i, p in enumerate(picks, 1)]
+    table(rows, ["#", "Title", "Artist", "Fit", "", "Found via", "Why"])
+    print("\nFit: how much better the song fits this mood than the rest of your library "
+          "(99.5 = better than 99.5% of it).")
+
+
+def create_from(ctx, preview, name, assume_yes):
+    picks = preview["picks"]
+    mood_name = preview["mood"]
+    if not confirm(f'Create private playlist "{name}" with {len(picks)} tracks?', assume_yes):
+        print("Not created. The preview is saved; create it any time with:\n"
+              f'  python moods.py create "{mood_name}"')
         return 1
     uris = [p["uri"] for p in picks if p.get("uri")]
     created = ctx.sp.current_user_playlist_create(
@@ -315,6 +339,21 @@ def cmd_build(ctx):
     add_uris(ctx.sp, created["id"], uris)
     print(f"Created: {(created.get('external_urls') or {}).get('spotify', created['id'])}")
     return 0
+
+
+def cmd_create(ctx):
+    a = ctx.args
+    mood_name, _ = get_mood(load_moods(a.moods), a.mood)
+    preview = ctx.cache.get("preview", fold(mood_name))
+    if not preview:
+        raise SystemExit(f'No saved preview for "{mood_name}" yet. Build one first:\n'
+                         f'  python moods.py build "{mood_name}"')
+    when = datetime.datetime.fromtimestamp(preview["saved"])
+    print(f'Latest preview for "{mood_name}", built {when:%a %d %b %H:%M}:\n')
+    print_picks(preview["picks"])
+    name = a.name or preview["name"]
+    print()
+    return create_from(ctx, preview, name, a.yes)
 
 
 # ---------------- CLI ----------------
@@ -368,6 +407,13 @@ def build_parser():
     s.add_argument("--apply", action="store_true", help="create the playlist (default: dry run)")
     s.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     s.set_defaults(func=cmd_build)
+
+    s = sub.add_parser("create", parents=[common],
+                       help="create the playlist from a mood's latest preview, without rebuilding")
+    s.add_argument("mood")
+    s.add_argument("--name", help="playlist name (default: the name the preview showed)")
+    s.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
+    s.set_defaults(func=cmd_create)
     return p
 
 
